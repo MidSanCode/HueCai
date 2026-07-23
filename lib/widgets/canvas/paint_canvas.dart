@@ -1,0 +1,255 @@
+import 'dart:math';
+import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
+import '../../models/project.dart';
+import '../../models/drawable.dart';
+import '../../providers/tool_provider.dart';
+import '../../providers/canvas_provider.dart';
+import '../../providers/project_provider.dart';
+
+class PaintCanvas extends StatefulWidget {
+  final Project project;
+
+  const PaintCanvas({super.key, required this.project});
+
+  @override
+  State<PaintCanvas> createState() => _PaintCanvasState();
+}
+
+class _PaintCanvasState extends State<PaintCanvas> {
+  Drawable? _currentDrawable;
+
+  Offset _toCanvas(Offset screenPos) {
+    final cp = context.read<CanvasProvider>();
+    final dx = (screenPos.dx - cp.offset.dx - widget.project.settings.width / 2) / cp.scale;
+    final dy = (screenPos.dy - cp.offset.dy - widget.project.settings.height / 2) / cp.scale;
+    final cosV = cos(cp.rotation);
+    final sinV = sin(cp.rotation);
+    final rx = dx * cosV + dy * sinV + widget.project.settings.width / 2;
+    final ry = -dx * sinV + dy * cosV + widget.project.settings.height / 2;
+    return Offset(rx, ry);
+  }
+
+  void _onPointerDown(Offset pos) {
+    final tp = context.read<ToolProvider>();
+    final pp = context.read<ProjectProvider>();
+    final canvasPos = _toCanvas(pos);
+
+    if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        points: [canvasPos],
+        color: tp.currentTool == ToolType.eraser ? Colors.white : tp.primaryColor,
+        strokeWidth: tp.brushSize,
+        opacity: tp.brushOpacity,
+      );
+      _currentDrawable = drawable;
+      pp.addDrawable(drawable);
+    } else if (tp.currentTool == ToolType.shape) {
+      pp.clearSelection();
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        isShape: true,
+        shapeType: tp.currentShape,
+        points: [canvasPos, canvasPos],
+        color: tp.primaryColor,
+        strokeWidth: tp.brushSize,
+        isFilled: false,
+      );
+      _currentDrawable = drawable;
+      pp.addDrawable(drawable);
+    } else if (tp.currentTool == ToolType.move) {
+      final hit = _hitTest(canvasPos);
+      if (hit != null) {
+        pp.selectDrawable(hit);
+      }
+    }
+  }
+
+  void _onPointerMove(Offset pos) {
+    if (_currentDrawable == null) return;
+    final tp = context.read<ToolProvider>();
+    final pp = context.read<ProjectProvider>();
+    final canvasPos = _toCanvas(pos);
+
+    if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
+      _currentDrawable!.points.add(canvasPos);
+      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+    } else if (tp.currentTool == ToolType.shape) {
+      final snapped = _snapShapeEnd(tp, canvasPos);
+      _currentDrawable!.points = [_currentDrawable!.points.first, snapped];
+      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+    }
+  }
+
+  void _onPointerUp(Offset pos) {
+    if (_currentDrawable != null) {
+      final pp = context.read<ProjectProvider>();
+      _currentDrawable!.selected = true;
+      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+    }
+    _currentDrawable = null;
+  }
+
+  Offset _snapShapeEnd(ToolProvider tp, Offset end) {
+    if (!tp.isStandardMode) return end;
+    final start = _currentDrawable!.points.first;
+    final dx = end.dx - start.dx;
+    final dy = end.dy - start.dy;
+    final absDx = dx.abs();
+    final absDy = dy.abs();
+
+    switch (tp.currentShape) {
+      case ShapeType.rect:
+      case ShapeType.ellipse:
+        final size = absDx > absDy ? absDx : absDy;
+        return Offset(
+          start.dx + (dx >= 0 ? size : -size),
+          start.dy + (dy >= 0 ? size : -size),
+        );
+      case ShapeType.line:
+        final angle = atan2(dy, dx);
+        final snapped = tp.snapAngle(angle);
+        final len = Offset(dx, dy).distance;
+        return Offset(
+          start.dx + len * cos(snapped),
+          start.dy + len * sin(snapped),
+        );
+      default:
+        return end;
+    }
+  }
+
+  Drawable? _hitTest(Offset canvasPos) {
+    for (final layer in widget.project.layers.reversed) {
+      for (final d in layer.drawables.reversed) {
+        if (d.bounds.inflate(8).contains(canvasPos)) {
+          return d;
+        }
+      }
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tp = context.watch<ToolProvider>();
+    final cp = context.watch<CanvasProvider>();
+    final pp = context.watch<ProjectProvider>();
+    final isMoveTool = tp.currentTool == ToolType.move;
+    final hasSelection = pp.selectedDrawable != null;
+
+    return Listener(
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          cp.handleScroll(event);
+        }
+      },
+      child: GestureDetector(
+        onScaleStart: (details) {
+          if (details.pointerCount == 1) {
+            if (!isMoveTool || hasSelection) {
+              _onPointerDown(details.focalPoint);
+            }
+          }
+        },
+        onScaleUpdate: (details) {
+          if (details.pointerCount >= 2) {
+            cp.panBy(details.focalPointDelta);
+            cp.zoomBy(details.scale, details.focalPoint);
+            cp.rotateBy(details.rotation);
+          } else {
+            if (isMoveTool && !hasSelection) {
+              cp.panBy(details.focalPointDelta);
+            } else {
+              _onPointerMove(details.focalPoint);
+            }
+          }
+        },
+        onScaleEnd: (details) {
+          if (_currentDrawable != null) {
+            _onPointerUp(Offset.zero);
+            _currentDrawable = null;
+          }
+        },
+        child: Transform(
+          transform: Matrix4.identity()
+            ..translateByDouble(cp.offset.dx, cp.offset.dy, 0, 1)
+            ..translateByDouble(
+                widget.project.settings.width / 2,
+                widget.project.settings.height / 2, 0, 1)
+            ..rotateZ(cp.rotation)
+            ..scaleByDouble(cp.scale, cp.scale, cp.scale, 1)
+            ..translateByDouble(
+                -widget.project.settings.width / 2,
+                -widget.project.settings.height / 2, 0, 1),
+          child: CustomPaint(
+            painter: _CanvasPainter(
+              project: widget.project,
+              currentDrawable: _currentDrawable,
+            ),
+            child: SizedBox(
+              width: widget.project.settings.width.toDouble(),
+              height: widget.project.settings.height.toDouble(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CanvasPainter extends CustomPainter {
+  final Project project;
+  final Drawable? currentDrawable;
+
+  _CanvasPainter({required this.project, this.currentDrawable});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      Paint()..color = Colors.white,
+    );
+
+    for (final layer in project.layers) {
+      if (!layer.visible) continue;
+      for (final d in layer.drawables) {
+        d.draw(canvas, Paint());
+        if (d.selected) {
+          _drawSelectionHandles(canvas, d);
+        }
+      }
+    }
+
+    if (currentDrawable != null) {
+      currentDrawable!.draw(canvas, Paint());
+    }
+  }
+
+  void _drawSelectionHandles(Canvas canvas, Drawable d) {
+    final bounds = d.bounds;
+    final paint = Paint()
+      ..color = Colors.blue
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawRect(bounds, paint);
+    for (final corner in [
+      bounds.topLeft, bounds.topRight,
+      bounds.bottomLeft, bounds.bottomRight,
+      bounds.centerLeft, bounds.centerRight,
+      bounds.topCenter, bounds.bottomCenter,
+    ]) {
+      canvas.drawCircle(corner, 4, Paint()..color = Colors.white);
+      canvas.drawCircle(corner, 4, Paint()
+        ..color = Colors.blue
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CanvasPainter oldDelegate) => true;
+}
