@@ -99,34 +99,34 @@ class ToolPanel extends StatelessWidget {
   }
 
   void _showShapeMenu(BuildContext context) {
-    final shapes = [
-      (ShapeType.rect, Icons.rectangle_outlined, '矩形'),
-      (ShapeType.ellipse, Icons.circle_outlined, '椭圆'),
-      (ShapeType.polygon, Icons.change_history, '多边形'),
-      (ShapeType.line, Icons.horizontal_rule, '直线'),
-      (ShapeType.curve, Icons.timeline, '曲线'),
-    ];
+    final shapes = {
+      ShapeType.rect: 'shape.rect',
+      ShapeType.ellipse: 'shape.ellipse',
+      ShapeType.polygon: 'shape.polygon',
+      ShapeType.line: 'shape.line',
+      ShapeType.curve: 'shape.curve',
+    };
     showModalBottomSheet(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) => Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ...shapes.map((s) {
+            ...shapes.entries.map((e) {
               return ListTile(
-                leading: Icon(s.$2),
-                title: Text(s.$3),
-                selected: toolProvider.currentShape == s.$1,
+                leading: Icon(_shapeIcon(e.key)),
+                title: Text(e.value.tr()),
+                selected: toolProvider.currentShape == e.key,
                 onTap: () {
-                  toolProvider.setShape(s.$1);
+                  toolProvider.setShape(e.key);
                   Navigator.of(ctx).pop();
                 },
               );
             }),
             const Divider(),
             SwitchListTile(
-              title: Text('标准模式'),
-              subtitle: Text('对齐角度和比例'),
+              title: Text('tool.standard_mode'.tr()),
+              subtitle: Text('tool.standard_mode_hint'.tr()),
               value: toolProvider.isStandardMode,
               onChanged: (_) {
                 toolProvider.toggleStandardMode();

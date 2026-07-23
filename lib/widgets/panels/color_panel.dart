@@ -107,6 +107,7 @@ class _ColorWheelState extends State<_ColorWheel> {
   late double _hue;
   late double _sat;
   late double _val;
+  bool _inTriangle = false;
 
   @override
   void initState() {
@@ -128,6 +129,20 @@ class _ColorWheelState extends State<_ColorWheel> {
     }
   }
 
+  Offset _top(Offset center, double r) => Offset(center.dx, center.dy - r);
+  Offset _bl(Offset center, double r) => Offset(center.dx - r * 0.8660254, center.dy + r * 0.5);
+  Offset _br(Offset center, double r) => Offset(center.dx + r * 0.8660254, center.dy + r * 0.5);
+
+  bool _isInTriangle(Offset p, Offset center, double r) {
+    final top = _top(center, r), bl = _bl(center, r), br = _br(center, r);
+    final area = _triangleArea(top, bl, br);
+    if (area == 0) return false;
+    final u = _triangleArea(p, bl, br) / area;
+    final v = _triangleArea(top, p, br) / area;
+    final w = 1 - u - v;
+    return u >= -0.01 && v >= -0.01 && w >= -0.01;
+  }
+
   void _pick(Offset pos, Size size) {
     final cx = size.width / 2, cy = size.height / 2;
     final dx = pos.dx - cx, dy = pos.dy - cy;
@@ -137,28 +152,31 @@ class _ColorWheelState extends State<_ColorWheel> {
 
     if (dist > outerR || dist < 4) return;
 
-    if (dist > innerR) {
-      final angle = math.atan2(dy, dx) * 180 / math.pi;
-      _hue = (angle + 360) % 360;
-      _sat = _sat.clamp(0.0, 1.0);
-      _val = _val.clamp(0.0, 1.0);
-      widget.onChanged(HSVColor.fromAHSV(1, _hue, _sat, _val).toColor());
-    } else {
+    if (_inTriangle || dist <= innerR) {
       final triR = innerR;
-      final top = Offset(cx, cy - triR);
-      final bl = Offset(cx - triR * 0.8660254, cy + triR * 0.5);
-      final br = Offset(cx + triR * 0.8660254, cy + triR * 0.5);
+      final center = Offset(cx, cy);
+      final top = _top(center, triR);
+      final bl = _bl(center, triR);
+      final br = _br(center, triR);
+
+      if (!_inTriangle) {
+        if (!_isInTriangle(pos, center, triR)) return;
+        _inTriangle = true;
+      }
 
       final area = _triangleArea(top, bl, br);
       if (area == 0) return;
-      final u = _triangleArea(pos, bl, br) / area;
-      final v = _triangleArea(top, pos, br) / area;
-      final w = 1 - u - v;
-      if (u >= 0 && v >= 0 && w >= 0) {
-        _sat = w.clamp(0.0, 1.0);
-        _val = (u + w).clamp(0.0, 1.0);
-        widget.onChanged(HSVColor.fromAHSV(1, _hue, _sat, _val).toColor());
-      }
+      final u = (_triangleArea(pos, bl, br) / area).clamp(0.0, 1.0);
+      final v = (_triangleArea(top, pos, br) / area).clamp(0.0, 1.0);
+      final w = (1 - u - v).clamp(0.0, 1.0);
+      _sat = w;
+      _val = (u + w).clamp(0.0, 1.0);
+      widget.onChanged(HSVColor.fromAHSV(1, _hue, _sat, _val).toColor());
+    } else {
+      _inTriangle = false;
+      final angle = math.atan2(dy, dx) * 180 / math.pi;
+      _hue = (angle + 360) % 360;
+      widget.onChanged(HSVColor.fromAHSV(1, _hue, _sat, _val).toColor());
     }
   }
 
@@ -172,8 +190,12 @@ class _ColorWheelState extends State<_ColorWheel> {
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
         return GestureDetector(
-          onPanDown: (d) => _pick(d.localPosition, size),
+          onPanStart: (d) {
+            _inTriangle = false;
+            _pick(d.localPosition, size);
+          },
           onPanUpdate: (d) => _pick(d.localPosition, size),
+          onPanEnd: (_) => _inTriangle = false,
           child: CustomPaint(
             painter: _WheelPainter(
               selectedColor: widget.selectedColor,
@@ -240,8 +262,8 @@ class _WheelPainter extends CustomPainter {
       ..color = Colors.grey.shade400
       ..strokeWidth = 1);
 
-    final pickX = top.dx * (1 - val) + bl.dx * (1 - sat) * val + br.dx * sat * val;
-    final pickY = top.dy * (1 - val) + bl.dy * (1 - sat) * val + br.dy * sat * val;
+    final pickX = (val - sat) * top.dx + (1 - val) * bl.dx + sat * br.dx;
+    final pickY = (val - sat) * top.dy + (1 - val) * bl.dy + sat * br.dy;
 
     canvas.drawCircle(Offset(pickX, pickY), 4, Paint()..color = Colors.white);
     canvas.drawCircle(Offset(pickX, pickY), 4, Paint()

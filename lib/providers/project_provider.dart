@@ -211,6 +211,69 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void toggleLayerVisibility(int index) {
+    if (_currentProject == null || index >= _currentProject!.layers.length) return;
+    _currentProject!.layers[index].visible = !_currentProject!.layers[index].visible;
+    _markChanged();
+  }
+
+  void toggleLayerLock(int index) {
+    if (_currentProject == null || index >= _currentProject!.layers.length) return;
+    _currentProject!.layers[index].locked = !_currentProject!.layers[index].locked;
+    _markChanged();
+  }
+
+  void renameLayer(int index, String newName) {
+    if (_currentProject == null || index >= _currentProject!.layers.length) return;
+    _currentProject!.layers[index].name = newName;
+    _markChanged();
+  }
+
+  void moveLayerUp(int index) {
+    if (_currentProject == null || index >= _currentProject!.layers.length - 1) return;
+    final layer = _currentProject!.layers.removeAt(index);
+    _currentProject!.layers.insert(index + 1, layer);
+    _currentProject!.currentLayerIndex = index + 1;
+    _markChanged();
+  }
+
+  void moveLayerDown(int index) {
+    if (_currentProject == null || index <= 0) return;
+    final layer = _currentProject!.layers.removeAt(index);
+    _currentProject!.layers.insert(index - 1, layer);
+    _currentProject!.currentLayerIndex = index - 1;
+    _markChanged();
+  }
+
+  void setLayerBlendMode(int index, BlendModeExt mode) {
+    if (_currentProject == null || index >= _currentProject!.layers.length) return;
+    _currentProject!.layers[index].blendMode = mode;
+    _markChanged();
+  }
+
+  void deleteDrawable(String drawableId) {
+    if (_currentProject == null) return;
+    for (final layer in _currentProject!.layers) {
+      layer.drawables.removeWhere((d) => d.id == drawableId);
+    }
+    _markChanged();
+  }
+
+  Future<void> saveAsProject() async {
+    if (_currentProject == null) return;
+    final dir = await getApplicationDocumentsDirectory();
+    final saveDir = Directory('${dir.path}/huecai_projects');
+    if (!await saveDir.exists()) await saveDir.create(recursive: true);
+    final path = '${saveDir.path}/${_currentProject!.name}.hcp';
+    await _projectService.saveProject(_currentProject!, _historyService, filePath: path);
+    _hasUnsavedChanges = false;
+    notifyListeners();
+  }
+
+  Future<void> exportToPng() async {
+    // Placeholder - will be implemented with file_picker when used interactively
+  }
+
   void addDrawable(Drawable drawable) {
     if (_currentProject == null) return;
     final current = _currentProject!.currentLayer;

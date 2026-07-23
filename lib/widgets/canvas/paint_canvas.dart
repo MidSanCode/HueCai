@@ -8,6 +8,7 @@ import '../../models/drawable.dart';
 import '../../providers/tool_provider.dart';
 import '../../providers/canvas_provider.dart';
 import '../../providers/project_provider.dart';
+import '../../utils/logger.dart';
 
 class PaintCanvas extends StatefulWidget {
   final Project project;
@@ -23,6 +24,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
   Offset? _gradientStart;
   DateTime? _lastMultiTouchTime;
   int _lastTouchCount = 0;
+  final _log = AppLogger();
+
+  bool _isOnCanvas(Offset canvasPos) {
+    return canvasPos.dx >= 0 &&
+        canvasPos.dy >= 0 &&
+        canvasPos.dx <= widget.project.settings.width &&
+        canvasPos.dy <= widget.project.settings.height;
+  }
 
   Offset _toCanvas(Offset screenPos, Size areaSize) {
     final cp = context.read<CanvasProvider>();
@@ -44,7 +53,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
 
-    if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
+    _log.info('PointerDown tool=${tp.currentTool} canvasPos=(${canvasPos.dx.toStringAsFixed(1)}, ${canvasPos.dy.toStringAsFixed(1)})');
+
+    if ((tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser)) {
+      if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
       final drawable = Drawable(
         id: const Uuid().v4(),
@@ -297,6 +309,8 @@ class _CanvasPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
       Paint()..color = Colors.white,
@@ -315,6 +329,7 @@ class _CanvasPainter extends CustomPainter {
     if (currentDrawable != null) {
       currentDrawable!.draw(canvas, Paint());
     }
+    canvas.restore();
   }
 
   void _drawSelectionHandles(Canvas canvas, Drawable d) {

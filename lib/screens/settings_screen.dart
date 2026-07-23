@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
 import '../providers/app_settings.dart';
+import '../utils/logger.dart';
+import '../services/config_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -10,6 +14,7 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
     final locale = context.locale;
+    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -20,131 +25,194 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
       body: ListView(
+        padding: const EdgeInsets.all(12),
         children: [
-          const SizedBox(height: 8),
-          _sectionHeader(context, '外观'),
-          SwitchListTile(
-            title: Text('深色模式'),
-            subtitle: Text(settings.themeMode == ThemeMode.dark ? "当前: 深色" : settings.themeMode == ThemeMode.light ? "当前: 浅色" : "当前: 跟随系统"),
-            value: settings.themeMode == ThemeMode.dark,
-            onChanged: (v) {
-              final mode = v ? ThemeMode.dark : ThemeMode.light;
-              settings.setThemeMode(mode);
-            },
+          _sectionCard(
+            theme: theme,
+            title: 'settings.appearance'.tr(),
+            children: [
+              ListTile(
+                title: Text('settings.theme_mode'.tr()),
+                subtitle: Text(settings.themeMode == ThemeMode.dark
+                    ? 'settings.dark'.tr()
+                    : settings.themeMode == ThemeMode.light
+                        ? 'settings.light'.tr()
+                        : 'settings.system'.tr()),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => SimpleDialog(
+                      title: Text('settings.theme_mode'.tr()),
+                      children: [
+                        SimpleDialogOption(
+                          onPressed: () {
+                            settings.setThemeMode(ThemeMode.light);
+                            Navigator.of(ctx).pop();
+                          },
+                          child: Text('settings.light'.tr(), style: TextStyle(
+                            fontWeight: settings.themeMode == ThemeMode.light
+                                ? FontWeight.bold : FontWeight.normal,
+                          )),
+                        ),
+                        SimpleDialogOption(
+                          onPressed: () {
+                            settings.setThemeMode(ThemeMode.dark);
+                            Navigator.of(ctx).pop();
+                          },
+                          child: Text('settings.dark'.tr(), style: TextStyle(
+                            fontWeight: settings.themeMode == ThemeMode.dark
+                                ? FontWeight.bold : FontWeight.normal,
+                          )),
+                        ),
+                        SimpleDialogOption(
+                          onPressed: () {
+                            settings.setThemeMode(ThemeMode.system);
+                            Navigator.of(ctx).pop();
+                          },
+                          child: Text('settings.system'.tr(), style: TextStyle(
+                            fontWeight: settings.themeMode == ThemeMode.system
+                                ? FontWeight.bold : FontWeight.normal,
+                          )),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
-          ListTile(
-            title: Text('主题模式'),
-            subtitle: Text(settings.themeMode == ThemeMode.dark
-                ? '深色'
-                : settings.themeMode == ThemeMode.light
-                    ? '浅色'
-                    : '跟随系统'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => SimpleDialog(
-                  title: const Text('选择主题'),
-                  children: [
-                    SimpleDialogOption(
-                      onPressed: () {
-                        settings.setThemeMode(ThemeMode.light);
-                        Navigator.of(ctx).pop();
-                      },
-                      child: Text('浅色', style: TextStyle(
-                        fontWeight: settings.themeMode == ThemeMode.light
-                            ? FontWeight.bold : FontWeight.normal,
-                      )),
+          _sectionCard(
+            theme: theme,
+            title: 'settings.language'.tr(),
+            children: [
+              ListTile(
+                title: Text('settings.language'.tr()),
+                subtitle: Text(locale.languageCode == 'zh' ? '中文' : 'English'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => SimpleDialog(
+                      title: Text('settings.select_language'.tr()),
+                      children: [
+                        SimpleDialogOption(
+                          onPressed: () {
+                            context.setLocale(const Locale('zh'));
+                            settings.setLanguageCode('zh');
+                            Navigator.of(ctx).pop();
+                          },
+                          child: Text('中文', style: TextStyle(
+                            fontWeight: locale.languageCode == 'zh'
+                                ? FontWeight.bold : FontWeight.normal,
+                          )),
+                        ),
+                        SimpleDialogOption(
+                          onPressed: () {
+                            context.setLocale(const Locale('en'));
+                            settings.setLanguageCode('en');
+                            Navigator.of(ctx).pop();
+                          },
+                          child: Text('English', style: TextStyle(
+                            fontWeight: locale.languageCode == 'en'
+                                ? FontWeight.bold : FontWeight.normal,
+                          )),
+                        ),
+                      ],
                     ),
-                    SimpleDialogOption(
-                      onPressed: () {
-                        settings.setThemeMode(ThemeMode.dark);
-                        Navigator.of(ctx).pop();
-                      },
-                      child: Text('深色', style: TextStyle(
-                        fontWeight: settings.themeMode == ThemeMode.dark
-                            ? FontWeight.bold : FontWeight.normal,
-                      )),
-                    ),
-                    SimpleDialogOption(
-                      onPressed: () {
-                        settings.setThemeMode(ThemeMode.system);
-                        Navigator.of(ctx).pop();
-                      },
-                      child: Text('跟随系统', style: TextStyle(
-                        fontWeight: settings.themeMode == ThemeMode.system
-                            ? FontWeight.bold : FontWeight.normal,
-                      )),
-                    ),
-                  ],
-                ),
-              );
-            },
+                  );
+                },
+              ),
+            ],
           ),
-          const Divider(),
-          _sectionHeader(context, '语言'),
-          ListTile(
-            title: Text('语言'),
-            subtitle: Text(locale.languageCode == 'zh' ? '中文' : 'English'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => SimpleDialog(
-                  title: const Text('选择语言'),
-                  children: [
-                    SimpleDialogOption(
-                      onPressed: () {
-                        context.setLocale(const Locale('zh'));
-                        settings.setLanguageCode('zh');
-                        Navigator.of(ctx).pop();
-                      },
-                      child: Text('中文', style: TextStyle(
-                        fontWeight: locale.languageCode == 'zh'
-                            ? FontWeight.bold : FontWeight.normal,
-                      )),
-                    ),
-                    SimpleDialogOption(
-                      onPressed: () {
-                        context.setLocale(const Locale('en'));
-                        settings.setLanguageCode('en');
-                        Navigator.of(ctx).pop();
-                      },
-                      child: Text('English', style: TextStyle(
-                        fontWeight: locale.languageCode == 'en'
-                            ? FontWeight.bold : FontWeight.normal,
-                      )),
-                    ),
-                  ],
-                ),
-              );
-            },
+          _sectionCard(
+            theme: theme,
+            title: 'settings.canvas'.tr(),
+            children: [
+              ListTile(
+                title: Text('settings.default_dpi'.tr()),
+                subtitle: const Text('72 DPI'),
+                trailing: const Icon(Icons.chevron_right),
+              ),
+            ],
           ),
-          const Divider(),
-          _sectionHeader(context, '画布'),
-          ListTile(
-            title: Text('默认分辨率'),
-            subtitle: const Text('72 DPI'),
-            trailing: const Icon(Icons.chevron_right),
+          _sectionCard(
+            theme: theme,
+            title: 'settings.logs'.tr(),
+            children: [
+              ListTile(
+                leading: const Icon(Icons.file_download),
+                title: Text('settings.export_log'.tr()),
+                subtitle: Text('settings.export_log_desc'.tr()),
+                onTap: () async {
+                  final logPath = await AppLogger().export();
+                  final result = await FilePicker.platform.saveFile(
+                    dialogTitle: 'settings.export_log'.tr(),
+                    fileName: 'huecai_log.txt',
+                    type: FileType.any,
+                  );
+                  if (result != null) {
+                    try {
+                      await File(logPath).copy(result);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('settings.export_done'.tr())),
+                        );
+                      }
+                    } catch (_) {}
+                  }
+                },
+              ),
+            ],
           ),
-          const Divider(),
-          _sectionHeader(context, '关于'),
-          ListTile(
-            title: Text('app.name'.tr()),
-            subtitle: const Text('版本 1.0.0'),
+          _sectionCard(
+            theme: theme,
+            title: 'settings.about'.tr(),
+            children: [
+              ListTile(
+                title: Text('app.name'.tr()),
+                subtitle: Text('${'settings.version'.tr()} (${ConfigService.buildVersion})'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.build),
+                title: const Text('Build Number'),
+                subtitle: Text(ConfigService.buildNumber),
+              ),
+              ListTile(
+                title: Text('settings.copyright'.tr()),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _sectionHeader(BuildContext context, String title) {
+  Widget _sectionCard({
+    required ThemeData theme,
+    required String title,
+    required List<Widget> children,
+  }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Text(title,
-        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-          color: Theme.of(context).colorScheme.primary,
-        )),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Text(
+                title,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ),
+            ...children,
+          ],
+        ),
+      ),
     );
   }
 }

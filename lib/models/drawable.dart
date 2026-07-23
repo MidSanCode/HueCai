@@ -204,6 +204,49 @@ class Drawable {
         gradientAngle: gradientAngle ?? this.gradientAngle,
       );
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'isShape': isShape,
+        'shapeType': shapeType?.name,
+        'points': points.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
+        'color': color.toARGB32(),
+        'strokeWidth': strokeWidth,
+        'opacity': opacity,
+        'isFilled': isFilled,
+        'rotation': rotation,
+        'selected': selected,
+        'isGradient': isGradient,
+        'gradientStops': gradientStops.map((s) => s.toJson()).toList(),
+        'gradientAngle': gradientAngle,
+      };
+
+  factory Drawable.fromJson(Map<String, dynamic> json) => Drawable(
+        id: json['id'] as String,
+        isShape: json['isShape'] as bool? ?? false,
+        shapeType: json['shapeType'] != null
+            ? ShapeType.values.byName(json['shapeType'] as String)
+            : null,
+        points: (json['points'] as List)
+            .map((p) => Offset(
+                  (p['x'] as num).toDouble(),
+                  (p['y'] as num).toDouble(),
+                ))
+            .toList(),
+        color: Color(json['color'] as int),
+        strokeWidth: (json['strokeWidth'] as num).toDouble(),
+        opacity: (json['opacity'] as num).toDouble(),
+        isFilled: json['isFilled'] as bool? ?? false,
+        rotation: (json['rotation'] as num).toDouble(),
+        selected: json['selected'] as bool? ?? false,
+        isGradient: json['isGradient'] as bool? ?? false,
+        gradientStops: (json['gradientStops'] as List?)
+                ?.map(
+                    (s) => GradientStop.fromJson(s as Map<String, dynamic>))
+                .toList() ??
+            [],
+        gradientAngle: (json['gradientAngle'] as num).toDouble(),
+      );
+
   void _drawStroke(Canvas canvas, Paint paint) {
     if (points.length < 2) return;
     final path = ui.Path()..moveTo(points.first.dx, points.first.dy);

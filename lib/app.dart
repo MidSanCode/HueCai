@@ -13,7 +13,6 @@ class HueCaiApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ProjectProvider()),
-        ChangeNotifierProvider(create: (_) => AppSettings()),
       ],
       child: _AppContent(),
     );

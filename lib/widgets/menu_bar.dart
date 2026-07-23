@@ -6,6 +6,7 @@ import '../providers/canvas_provider.dart';
 import '../providers/project_provider.dart';
 import '../models/drawable.dart';
 import '../screens/settings_screen.dart';
+import '../screens/workspace_screen.dart';
 
 class EditorMenuBar extends StatelessWidget {
   const EditorMenuBar({super.key});
@@ -37,7 +38,10 @@ class _DesktopMenuBar extends StatelessWidget {
         children: [
           _MenuButton(label: 'menu.file'.tr(), children: [
             _MenuItem('menu.file.new'.tr(), Icons.add, () {
-              Navigator.of(context).pushReplacementNamed('/');
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const WorkspaceScreen()),
+                (_) => false,
+              );
             }),
             _MenuItem('menu.file.open'.tr(), Icons.folder_open, () {
               context.read<ProjectProvider>().loadRecentProjects();
@@ -45,8 +49,12 @@ class _DesktopMenuBar extends StatelessWidget {
             _MenuItem('menu.file.save'.tr(), Icons.save, () {
               context.read<ProjectProvider>().saveProject();
             }),
-            _MenuItem('menu.file.save_as'.tr(), Icons.save_alt, () {}),
-            _MenuItem('menu.file.export'.tr(), Icons.file_download, () {}),
+            _MenuItem('menu.file.save_as'.tr(), Icons.save_alt, () {
+              context.read<ProjectProvider>().saveAsProject();
+            }),
+            _MenuItem('menu.file.export'.tr(), Icons.file_download, () {
+              context.read<ProjectProvider>().exportToPng();
+            }),
           ]),
           _MenuButton(label: 'menu.edit'.tr(), children: [
             _MenuItem('menu.edit.undo'.tr(), Icons.undo, () {
@@ -55,9 +63,21 @@ class _DesktopMenuBar extends StatelessWidget {
             _MenuItem('menu.edit.redo'.tr(), Icons.redo, () {
               context.read<ProjectProvider>().redo();
             }),
-            _MenuItem('menu.edit.copy'.tr(), Icons.copy, () {}),
+            _MenuItem('menu.edit.copy'.tr(), Icons.copy, () {
+              final pp = context.read<ProjectProvider>();
+              if (pp.selectedDrawable != null) {
+                pp.saveSnapshot();
+                pp.selectedDrawable!.copyWith();
+              }
+            }),
             _MenuItem('menu.edit.paste'.tr(), Icons.content_paste, () {}),
-            _MenuItem('menu.edit.cut'.tr(), Icons.content_cut, () {}),
+            _MenuItem('menu.edit.cut'.tr(), Icons.content_cut, () {
+              final pp = context.read<ProjectProvider>();
+              if (pp.selectedDrawable != null) {
+                pp.saveSnapshot();
+                pp.deleteDrawable(pp.selectedDrawable!.id);
+              }
+            }),
           ]),
           _MenuButton(label: 'menu.view'.tr(), children: [
             _MenuItem('menu.view.zoom_in'.tr(), Icons.zoom_in,
@@ -79,19 +99,59 @@ class _DesktopMenuBar extends StatelessWidget {
                 context.read<CanvasProvider>().resetView),
           ]),
           _MenuButton(label: 'menu.image'.tr(), children: [
-            _MenuItem('menu.image.flip_h'.tr(), Icons.flip, () {}),
-            _MenuItem('menu.image.flip_v'.tr(), Icons.flip, () {}),
-            _MenuItem('menu.image.rotate_cw'.tr(), Icons.rotate_right, () {}),
-            _MenuItem('menu.image.rotate_ccw'.tr(), Icons.rotate_left, () {}),
+            _MenuItem('menu.image.flip_h'.tr(), Icons.flip, () {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Not yet implemented')));
+            }),
+            _MenuItem('menu.image.flip_v'.tr(), Icons.flip, () {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Not yet implemented')));
+            }),
+            _MenuItem('menu.image.rotate_cw'.tr(), Icons.rotate_right, () {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Not yet implemented')));
+            }),
+            _MenuItem('menu.image.rotate_ccw'.tr(), Icons.rotate_left, () {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Not yet implemented')));
+            }),
           ]),
           _MenuButton(label: 'menu.layer'.tr(), children: [
-            _MenuItem('menu.layer.new'.tr(), Icons.layers, () {}),
-            _MenuItem('menu.layer.duplicate'.tr(), Icons.copy, () {}),
-            _MenuItem('menu.layer.merge'.tr(), Icons.merge, () {}),
-            _MenuItem('menu.layer.delete'.tr(), Icons.delete, () {}),
+            _MenuItem('menu.layer.new'.tr(), Icons.layers, () {
+              context.read<ProjectProvider>().addLayer();
+            }),
+            _MenuItem('menu.layer.duplicate'.tr(), Icons.copy, () {
+              final pp = context.read<ProjectProvider>();
+              if (pp.currentProject != null) {
+                pp.saveSnapshot();
+                pp.duplicateLayer(pp.currentProject!.currentLayerIndex);
+              }
+            }),
+            _MenuItem('menu.layer.merge'.tr(), Icons.merge, () {
+              final pp = context.read<ProjectProvider>();
+              if (pp.currentProject != null && pp.currentProject!.currentLayerIndex > 0) {
+                pp.saveSnapshot();
+                pp.mergeDownLayer(pp.currentProject!.currentLayerIndex);
+              }
+            }),
+            _MenuItem('menu.layer.delete'.tr(), Icons.delete, () {
+              final pp = context.read<ProjectProvider>();
+              if (pp.currentProject != null) {
+                pp.saveSnapshot();
+                pp.deleteLayer(pp.currentProject!.currentLayerIndex);
+              }
+            }),
             const _MenuDivider(),
-            _MenuItem('menu.layer.move_up'.tr(), Icons.arrow_upward, () {}),
-            _MenuItem('menu.layer.move_down'.tr(), Icons.arrow_downward, () {}),
+            _MenuItem('menu.layer.move_up'.tr(), Icons.arrow_upward, () {
+              final pp = context.read<ProjectProvider>();
+              if (pp.currentProject != null) {
+                pp.saveSnapshot();
+                pp.moveLayerUp(pp.currentProject!.currentLayerIndex);
+              }
+            }),
+            _MenuItem('menu.layer.move_down'.tr(), Icons.arrow_downward, () {
+              final pp = context.read<ProjectProvider>();
+              if (pp.currentProject != null) {
+                pp.saveSnapshot();
+                pp.moveLayerDown(pp.currentProject!.currentLayerIndex);
+              }
+            }),
           ]),
           _MenuButton(label: 'menu.tool'.tr(), children: [
             _MenuItem('menu.tool.move'.tr(), Icons.open_with,
@@ -159,7 +219,10 @@ class _MobileMenuBar extends StatelessWidget {
       child: Row(
         children: [
           _MobileBtn(Icons.add, 'menu.file.new'.tr(), () {
-            Navigator.of(context).pushReplacementNamed('/');
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const WorkspaceScreen()),
+              (_) => false,
+            );
           }),
           _MobileBtn(Icons.folder_open, 'menu.file.open'.tr(), () {}),
           _MobileBtn(Icons.save, 'menu.file.save'.tr(), () {
@@ -207,6 +270,7 @@ class _MobileMenuBar extends StatelessWidget {
                 case 'tool_fill':
                   toolProvider.setTool(ToolType.fill);
                 case 'layer_new':
+                  context.read<ProjectProvider>().addLayer();
                 case 'about':
                   showAboutDialog(
                     context: context,

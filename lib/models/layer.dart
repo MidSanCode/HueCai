@@ -76,6 +76,7 @@ class Layer {
         'locked': locked,
         'blendMode': blendMode.name,
         'thumbnailPath': thumbnailPath,
+        'drawables': drawables.map((d) => d.toJson()).toList(),
       };
 
   factory Layer.fromJson(Map<String, dynamic> json) => Layer(
@@ -88,5 +89,10 @@ class Layer {
             (e) => e.name == json['blendMode'],
             orElse: () => BlendModeExt.normal),
         thumbnailPath: json['thumbnailPath'] as String?,
+        drawables: (json['drawables'] as List?)
+                ?.map(
+                    (d) => Drawable.fromJson(d as Map<String, dynamic>))
+                .toList() ??
+            [],
       );
 }

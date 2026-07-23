@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:archive/archive.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/project.dart';
 import '../models/layer.dart';
@@ -98,7 +99,7 @@ class ProjectService {
 
     for (int i = 0; i < project.layers.length; i++) {
       final layer = project.layers[i];
-      final pngBytes = await _layerToPng(layer);
+      final pngBytes = await _layerToPng(layer, project.settings.width, project.settings.height);
       if (pngBytes != null) {
         archive.addFile(ArchiveFile(
           'layers/layer_$i.png',
@@ -132,8 +133,24 @@ class ProjectService {
     return savePath;
   }
 
-  Future<Uint8List?> _layerToPng(Layer layer) async {
-    return null;
+  Future<Uint8List?> _layerToPng(Layer layer, int canvasW, int canvasH) async {
+    try {
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, canvasW.toDouble(), canvasH.toDouble()));
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, canvasW.toDouble(), canvasH.toDouble()),
+        Paint()..color = Colors.white,
+      );
+      for (final d in layer.drawables) {
+        d.draw(canvas, Paint());
+      }
+      final picture = recorder.endRecording();
+      final img = await picture.toImage(canvasW, canvasH);
+      final pngBytes = await img.toByteData(format: ui.ImageByteFormat.png);
+      return pngBytes?.buffer.asUint8List();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<Project> createProject({
