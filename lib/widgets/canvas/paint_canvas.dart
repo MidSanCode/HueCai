@@ -24,6 +24,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
   Offset? _gradientStart;
   DateTime? _lastMultiTouchTime;
   int _lastTouchCount = 0;
+
+  // Gesture debounce
+  Offset? _downScreenPos;
+  bool _dragConfirmed = false;
+  bool _isScaling = false;
+  DateTime? _scaleEndTime;
+  static const double _dragThreshold = 4.0;
+  static const Duration _scaleCooldown = Duration(milliseconds: 200);
+
   final _log = AppLogger();
 
   bool _isOnCanvas(Offset canvasPos) {
@@ -50,12 +59,39 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
   void _onPointerDown(Offset pos, Size areaSize) {
     final tp = context.read<ToolProvider>();
-    final pp = context.read<ProjectProvider>();
+
+    // Ignore single-finger down if we were just scaling
+    if (_scaleEndTime != null &&
+        DateTime.now().difference(_scaleEndTime!) < _scaleCooldown) {
+      return;
+    }
+
     final canvasPos = _toCanvas(pos, areaSize);
+    _downScreenPos = pos;
+    _dragConfirmed = false;
 
     _log.info('PointerDown tool=${tp.currentTool} canvasPos=(${canvasPos.dx.toStringAsFixed(1)}, ${canvasPos.dy.toStringAsFixed(1)})');
 
-    if ((tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser)) {
+    if (tp.currentTool == ToolType.fill) {
+      final pp = context.read<ProjectProvider>();
+      pp.saveSnapshot();
+      final hit = _hitTest(canvasPos);
+      if (hit != null) pp.toggleFillDrawable(hit, tp.primaryColor);
+    } else if (tp.currentTool == ToolType.gradient) {
+      _gradientStart = canvasPos;
+    } else if (tp.currentTool == ToolType.move) {
+      final hit = _hitTest(canvasPos);
+      if (hit != null) context.read<ProjectProvider>().selectDrawable(hit);
+    }
+    // Brush/eraser/shape start is deferred to _tryBeginDrag
+  }
+
+  void _tryBeginDrag(Offset pos, Size areaSize) {
+    final tp = context.read<ToolProvider>();
+    final pp = context.read<ProjectProvider>();
+    final canvasPos = _toCanvas(pos, areaSize);
+
+    if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
       if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
       final drawable = Drawable(
@@ -67,6 +103,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       );
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
+      _dragConfirmed = true;
     } else if (tp.currentTool == ToolType.shape) {
       pp.saveSnapshot();
       pp.clearSelection();
@@ -81,37 +118,22 @@ class _PaintCanvasState extends State<PaintCanvas> {
       );
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
-    } else if (tp.currentTool == ToolType.fill) {
-      pp.saveSnapshot();
-      final hit = _hitTest(canvasPos);
-      if (hit != null) {
-        pp.toggleFillDrawable(hit, tp.primaryColor);
-      }
-    } else if (tp.currentTool == ToolType.gradient) {
-      _gradientStart = canvasPos;
-      pp.saveSnapshot();
-    } else if (tp.currentTool == ToolType.move) {
-      final hit = _hitTest(canvasPos);
-      if (hit != null) {
-        pp.selectDrawable(hit);
-      }
+      _dragConfirmed = true;
     }
   }
 
   void _onPointerMove(Offset pos, Size areaSize) {
-    if (_currentDrawable == null && _gradientStart == null) return;
     final tp = context.read<ToolProvider>();
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
 
-    if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
-      _currentDrawable!.points.add(canvasPos);
-      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
-    } else if (tp.currentTool == ToolType.shape) {
-      final snapped = _snapShapeEnd(tp, canvasPos);
-      _currentDrawable!.points = [_currentDrawable!.points.first, snapped];
-      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
-    } else if (tp.currentTool == ToolType.gradient && _gradientStart != null) {
+    // Gradient: apply drag threshold before updating
+    if (tp.currentTool == ToolType.gradient && _gradientStart != null) {
+      if (!_dragConfirmed) {
+        if (_downScreenPos == null) return;
+        if ((pos - _downScreenPos!).distance < _dragThreshold) return;
+        _dragConfirmed = true;
+      }
       pp.clearSelection();
       final angle = atan2(canvasPos.dy - _gradientStart!.dy, canvasPos.dx - _gradientStart!.dx) * 180 / pi;
       final drawable = Drawable(
@@ -131,22 +153,48 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (_currentDrawable != null) {
         pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
       } else {
+        pp.saveSnapshot();
         pp.addDrawable(drawable);
         _currentDrawable = drawable;
       }
+      return;
+    }
+
+    // Brush/eraser/shape: defer start until drag threshold is met
+    if (_currentDrawable == null) {
+      if (_downScreenPos == null) return;
+      if ((pos - _downScreenPos!).distance < _dragThreshold) return;
+      _tryBeginDrag(pos, areaSize);
+      if (_currentDrawable == null) return;
+    }
+
+    if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
+      _currentDrawable!.points.add(canvasPos);
+      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+    } else if (tp.currentTool == ToolType.shape) {
+      final snapped = _snapShapeEnd(tp, canvasPos);
+      _currentDrawable!.points = [_currentDrawable!.points.first, snapped];
+      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
     }
   }
 
   void _onPointerUp() {
-    if (_currentDrawable != null) {
-      final pp = context.read<ProjectProvider>();
+    final pp = context.read<ProjectProvider>();
+    // If drag was never confirmed, discard the pending drawable
+    if (!_dragConfirmed && _currentDrawable != null) {
+      pp.deleteDrawable(_currentDrawable!.id);
+      _currentDrawable = null;
+    } else if (_currentDrawable != null) {
       if (_currentDrawable!.isShape) {
         _currentDrawable!.selected = true;
       }
       pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
     }
+    // If gradient drag was never confirmed, just discard the start point
     _currentDrawable = null;
     _gradientStart = null;
+    _downScreenPos = null;
+    _dragConfirmed = false;
   }
 
   Offset _snapShapeEnd(ToolProvider tp, Offset end) {
@@ -214,7 +262,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final hasSelection = pp.selectedDrawable != null;
     final isDrawingTool = tp.currentTool == ToolType.brush ||
         tp.currentTool == ToolType.eraser ||
-        tp.currentTool == ToolType.shape;
+        tp.currentTool == ToolType.shape ||
+        tp.currentTool == ToolType.gradient ||
+        tp.currentTool == ToolType.fill;
     final pw = widget.project.settings.width.toDouble();
     final ph = widget.project.settings.height.toDouble();
 
@@ -230,7 +280,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
           child: GestureDetector(
             onScaleStart: (details) {
               if (details.pointerCount >= 2) {
+                _isScaling = true;
                 _handleMultiTouch(details.pointerCount);
+                return;
+              }
+              // Ignore single-finger immediately after multi-touch
+              if (_isScaling || _scaleEndTime != null &&
+                  DateTime.now().difference(_scaleEndTime!) < _scaleCooldown) {
                 return;
               }
               if (!isMoveTool || hasSelection) {
@@ -239,10 +295,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
             },
             onScaleUpdate: (details) {
               if (details.pointerCount >= 2) {
+                _isScaling = true;
                 cp.panBy(details.focalPointDelta);
                 cp.zoomBy(details.scale, details.focalPoint);
                 cp.rotateBy(details.rotation);
               } else {
+                if (_isScaling) {
+                  // Transitioning from multi-touch to single — ignore
+                  return;
+                }
                 if (isMoveTool && !hasSelection) {
                   cp.panBy(details.focalPointDelta);
                 } else if (isDrawingTool) {
@@ -251,6 +312,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
               }
             },
             onScaleEnd: (details) {
+              if (details.pointerCount >= 2) {
+                _isScaling = false;
+                _scaleEndTime = DateTime.now();
+              }
               if (_currentDrawable != null || _gradientStart != null) {
                 _onPointerUp();
               }
