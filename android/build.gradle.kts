@@ -7,9 +7,8 @@ allprojects {
 
 subprojects {
     afterEvaluate {
-        val ext = project.extensions.findByType(com.android.build.gradle.BaseExtension::class.java)
-        if (ext != null) {
-            ext.setCompileSdk(36)
+        project.extensions.findByType(com.android.build.api.dsl.CommonExtension::class.java)?.let { ext ->
+            ext.compileSdk = 36
         }
     }
 }
