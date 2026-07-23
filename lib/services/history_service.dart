@@ -3,24 +3,24 @@ import 'dart:convert';
 class HistoryEntry {
   final int timestamp;
   final String description;
-  final Map<String, dynamic> layerChanges;
+  final Map<String, dynamic> projectSnapshot;
 
   HistoryEntry({
     required this.timestamp,
     this.description = '',
-    required this.layerChanges,
+    required this.projectSnapshot,
   });
 
   Map<String, dynamic> toJson() => {
         'timestamp': timestamp,
         'description': description,
-        'layerChanges': layerChanges,
+        'projectSnapshot': projectSnapshot,
       };
 
   factory HistoryEntry.fromJson(Map<String, dynamic> json) => HistoryEntry(
         timestamp: json['timestamp'] as int,
         description: json['description'] as String? ?? '',
-        layerChanges: json['layerChanges'] as Map<String, dynamic>,
+        projectSnapshot: json['projectSnapshot'] as Map<String, dynamic>,
       );
 }
 
@@ -41,18 +41,18 @@ class HistoryService {
     }
   }
 
-  HistoryEntry? undo() {
+  Map<String, dynamic>? undo() {
     if (_undoStack.isEmpty) return null;
     final entry = _undoStack.removeLast();
     _redoStack.add(entry);
-    return entry;
+    return entry.projectSnapshot;
   }
 
-  HistoryEntry? redo() {
+  Map<String, dynamic>? redo() {
     if (_redoStack.isEmpty) return null;
     final entry = _redoStack.removeLast();
     _undoStack.add(entry);
-    return entry;
+    return entry.projectSnapshot;
   }
 
   void clear() {

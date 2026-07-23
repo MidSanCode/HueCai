@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../../providers/tool_provider.dart';
 
@@ -93,41 +94,115 @@ class _ColorPanelState extends State<ColorPanel> {
   }
 }
 
-class _ColorWheel extends StatelessWidget {
+class _ColorWheel extends StatefulWidget {
   final Color selectedColor;
   final ValueChanged<Color> onChanged;
   const _ColorWheel({required this.selectedColor, required this.onChanged});
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onPanDown: (d) => _pick(d.localPosition),
-      onPanUpdate: (d) => _pick(d.localPosition),
-      child: CustomPaint(
-        painter: _WheelPainter(selectedColor: selectedColor),
-        size: const Size(140, 140),
-      ),
-    );
+  State<_ColorWheel> createState() => _ColorWheelState();
+}
+
+class _ColorWheelState extends State<_ColorWheel> {
+  late double _hue;
+  late double _sat;
+  late double _val;
+
+  @override
+  void initState() {
+    super.initState();
+    final hsv = HSVColor.fromColor(widget.selectedColor);
+    _hue = hsv.hue;
+    _sat = hsv.saturation;
+    _val = hsv.value;
   }
 
-  void _pick(Offset pos) {
-    final cx = 70.0, cy = 70.0, radius = 65.0;
+  @override
+  void didUpdateWidget(_ColorWheel old) {
+    super.didUpdateWidget(old);
+    if (widget.selectedColor.toARGB32() != old.selectedColor.toARGB32()) {
+      final hsv = HSVColor.fromColor(widget.selectedColor);
+      _hue = hsv.hue;
+      _sat = hsv.saturation;
+      _val = hsv.value;
+    }
+  }
+
+  void _pick(Offset pos, Size size) {
+    final cx = size.width / 2, cy = size.height / 2;
     final dx = pos.dx - cx, dy = pos.dy - cy;
     final dist = math.sqrt(dx * dx + dy * dy);
-    if (dist > radius || dist < 5) return;
-    final hue = (math.atan2(dy, dx) * 180 / math.pi + 360) % 360;
-    final sat = (dist / radius).clamp(0.0, 1.0);
-    onChanged(HSVColor.fromAHSV(1, hue, sat, 1).toColor());
+    final outerR = size.width / 2 - 4;
+    final innerR = outerR * 0.7;
+
+    if (dist > outerR || dist < 4) return;
+
+    if (dist > innerR) {
+      final angle = math.atan2(dy, dx) * 180 / math.pi;
+      _hue = (angle + 360) % 360;
+      _sat = _sat.clamp(0.0, 1.0);
+      _val = _val.clamp(0.0, 1.0);
+      widget.onChanged(HSVColor.fromAHSV(1, _hue, _sat, _val).toColor());
+    } else {
+      final triR = innerR;
+      final top = Offset(cx, cy - triR);
+      final bl = Offset(cx - triR * 0.8660254, cy + triR * 0.5);
+      final br = Offset(cx + triR * 0.8660254, cy + triR * 0.5);
+
+      final area = _triangleArea(top, bl, br);
+      if (area == 0) return;
+      final u = _triangleArea(pos, bl, br) / area;
+      final v = _triangleArea(top, pos, br) / area;
+      final w = 1 - u - v;
+      if (u >= 0 && v >= 0 && w >= 0) {
+        _sat = w.clamp(0.0, 1.0);
+        _val = (u + w).clamp(0.0, 1.0);
+        widget.onChanged(HSVColor.fromAHSV(1, _hue, _sat, _val).toColor());
+      }
+    }
+  }
+
+  double _triangleArea(Offset a, Offset b, Offset c) {
+    return ((b.dx - a.dx) * (c.dy - a.dy) - (c.dx - a.dx) * (b.dy - a.dy)).abs() / 2;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        return GestureDetector(
+          onPanDown: (d) => _pick(d.localPosition, size),
+          onPanUpdate: (d) => _pick(d.localPosition, size),
+          child: CustomPaint(
+            painter: _WheelPainter(
+              selectedColor: widget.selectedColor,
+              hue: _hue,
+              sat: _sat,
+              val: _val,
+            ),
+            size: size,
+          ),
+        );
+      },
+    );
   }
 }
 
 class _WheelPainter extends CustomPainter {
   final Color selectedColor;
-  _WheelPainter({required this.selectedColor});
+  final double hue;
+  final double sat;
+  final double val;
+
+  _WheelPainter({required this.selectedColor, required this.hue, required this.sat, required this.val});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2, cy = size.height / 2, r = size.width / 2 - 5;
+    final cx = size.width / 2, cy = size.height / 2;
+    final outerR = size.width / 2 - 4;
+    final innerR = outerR * 0.7;
+
     for (int a = 0; a < 360; a += 2) {
       final rad = a * math.pi / 180;
       final nextRad = (a + 2) * math.pi / 180;
@@ -135,24 +210,47 @@ class _WheelPainter extends CustomPainter {
       final p = Paint()
         ..color = color
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 10;
+        ..strokeWidth = outerR - innerR;
       canvas.drawArc(
-        Rect.fromCircle(center: Offset(cx, cy), radius: r),
+        Rect.fromCircle(center: Offset(cx, cy), radius: (outerR + innerR) / 2),
         -rad - math.pi / 2, -(nextRad - rad), false, p,
       );
     }
-    final hsv = HSVColor.fromColor(selectedColor);
-    final angle = hsv.hue * math.pi / 180 - math.pi / 2;
-    final dist = hsv.saturation * r;
-    final px = cx + dist * math.cos(angle);
-    final py = cy + dist * math.sin(angle);
-    canvas.drawCircle(Offset(px, py), 5, Paint()..color = Colors.white);
-    canvas.drawCircle(Offset(px, py), 5, Paint()
+
+    final triR = innerR;
+    final top = Offset(cx, cy - triR);
+    final bl = Offset(cx - triR * 0.8660254, cy + triR * 0.5);
+    final br = Offset(cx + triR * 0.8660254, cy + triR * 0.5);
+
+    final hueColor = HSVColor.fromAHSV(1, hue, 1, 1).toColor();
+    final verts = ui.Vertices(
+      ui.VertexMode.triangles,
+      [top, bl, br],
+      colors: [Colors.white, Colors.black, hueColor],
+    );
+    canvas.drawVertices(verts, BlendMode.srcOver, Paint());
+
+    final path = Path()
+      ..moveTo(top.dx, top.dy)
+      ..lineTo(bl.dx, bl.dy)
+      ..lineTo(br.dx, br.dy)
+      ..close();
+    canvas.drawPath(path, Paint()
+      ..style = PaintingStyle.stroke
+      ..color = Colors.grey.shade400
+      ..strokeWidth = 1);
+
+    final pickX = top.dx * (1 - val) + bl.dx * (1 - sat) * val + br.dx * sat * val;
+    final pickY = top.dy * (1 - val) + bl.dy * (1 - sat) * val + br.dy * sat * val;
+
+    canvas.drawCircle(Offset(pickX, pickY), 4, Paint()..color = Colors.white);
+    canvas.drawCircle(Offset(pickX, pickY), 4, Paint()
       ..color = selectedColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2);
   }
 
   @override
-  bool shouldRepaint(_WheelPainter old) => old.selectedColor != selectedColor;
+  bool shouldRepaint(_WheelPainter old) =>
+      old.selectedColor != selectedColor || old.hue != hue || old.sat != sat || old.val != val;
 }

@@ -20,6 +20,9 @@ class PaintCanvas extends StatefulWidget {
 
 class _PaintCanvasState extends State<PaintCanvas> {
   Drawable? _currentDrawable;
+  Offset? _gradientStart;
+  DateTime? _lastMultiTouchTime;
+  int _lastTouchCount = 0;
 
   Offset _toCanvas(Offset screenPos, Size areaSize) {
     final cp = context.read<CanvasProvider>();
@@ -42,6 +45,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final canvasPos = _toCanvas(pos, areaSize);
 
     if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
+      pp.saveSnapshot();
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
@@ -52,6 +56,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
     } else if (tp.currentTool == ToolType.shape) {
+      pp.saveSnapshot();
       pp.clearSelection();
       final drawable = Drawable(
         id: const Uuid().v4(),
@@ -64,6 +69,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
       );
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
+    } else if (tp.currentTool == ToolType.fill) {
+      pp.saveSnapshot();
+      final hit = _hitTest(canvasPos);
+      if (hit != null) {
+        pp.toggleFillDrawable(hit, tp.primaryColor);
+      }
+    } else if (tp.currentTool == ToolType.gradient) {
+      _gradientStart = canvasPos;
+      pp.saveSnapshot();
     } else if (tp.currentTool == ToolType.move) {
       final hit = _hitTest(canvasPos);
       if (hit != null) {
@@ -73,7 +87,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
   }
 
   void _onPointerMove(Offset pos, Size areaSize) {
-    if (_currentDrawable == null) return;
+    if (_currentDrawable == null && _gradientStart == null) return;
     final tp = context.read<ToolProvider>();
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
@@ -85,6 +99,29 @@ class _PaintCanvasState extends State<PaintCanvas> {
       final snapped = _snapShapeEnd(tp, canvasPos);
       _currentDrawable!.points = [_currentDrawable!.points.first, snapped];
       pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+    } else if (tp.currentTool == ToolType.gradient && _gradientStart != null) {
+      pp.clearSelection();
+      final angle = atan2(canvasPos.dy - _gradientStart!.dy, canvasPos.dx - _gradientStart!.dx) * 180 / pi;
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        isShape: true,
+        shapeType: ShapeType.rect,
+        points: [_gradientStart!, canvasPos],
+        color: tp.primaryColor,
+        isFilled: true,
+        isGradient: true,
+        gradientStops: [
+          GradientStop(position: 0, color: tp.primaryColor),
+          GradientStop(position: 1, color: tp.secondaryColor),
+        ],
+        gradientAngle: angle,
+      );
+      if (_currentDrawable != null) {
+        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+      } else {
+        pp.addDrawable(drawable);
+        _currentDrawable = drawable;
+      }
     }
   }
 
@@ -97,6 +134,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
     }
     _currentDrawable = null;
+    _gradientStart = null;
   }
 
   Offset _snapShapeEnd(ToolProvider tp, Offset end) {
@@ -139,6 +177,22 @@ class _PaintCanvasState extends State<PaintCanvas> {
     return null;
   }
 
+  void _handleMultiTouch(int count) {
+    if (count < 2) return;
+    final now = DateTime.now();
+    if (_lastMultiTouchTime != null &&
+        now.difference(_lastMultiTouchTime!) < const Duration(milliseconds: 400) &&
+        _lastTouchCount == count) {
+      final pp = context.read<ProjectProvider>();
+      if (count == 2) pp.undo();
+      if (count >= 3) pp.redo();
+      _lastMultiTouchTime = null;
+    } else {
+      _lastMultiTouchTime = now;
+      _lastTouchCount = count;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tp = context.watch<ToolProvider>();
@@ -146,6 +200,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.watch<ProjectProvider>();
     final isMoveTool = tp.currentTool == ToolType.move;
     final hasSelection = pp.selectedDrawable != null;
+    final isDrawingTool = tp.currentTool == ToolType.brush ||
+        tp.currentTool == ToolType.eraser ||
+        tp.currentTool == ToolType.shape;
     final pw = widget.project.settings.width.toDouble();
     final ph = widget.project.settings.height.toDouble();
 
@@ -160,10 +217,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
           },
           child: GestureDetector(
             onScaleStart: (details) {
-              if (details.pointerCount == 1) {
-                if (!isMoveTool || hasSelection) {
-                  _onPointerDown(details.focalPoint, areaSize);
-                }
+              if (details.pointerCount >= 2) {
+                _handleMultiTouch(details.pointerCount);
+                return;
+              }
+              if (!isMoveTool || hasSelection) {
+                _onPointerDown(details.localFocalPoint, areaSize);
               }
             },
             onScaleUpdate: (details) {
@@ -174,13 +233,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
               } else {
                 if (isMoveTool && !hasSelection) {
                   cp.panBy(details.focalPointDelta);
-                } else {
-                  _onPointerMove(details.focalPoint, areaSize);
+                } else if (isDrawingTool) {
+                  _onPointerMove(details.localFocalPoint, areaSize);
                 }
               }
             },
             onScaleEnd: (details) {
-              if (_currentDrawable != null) {
+              if (_currentDrawable != null || _gradientStart != null) {
                 _onPointerUp();
               }
             },

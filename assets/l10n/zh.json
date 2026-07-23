@@ -87,6 +87,7 @@
   "tool.brush": "画笔",
   "tool.eraser": "橡皮擦",
   "tool.fill": "填充",
+  "tool.gradient": "渐变填充",
   "tool.eyedropper": "吸管",
   "layer.panel": "图层",
   "layer.normal": "正常",

@@ -1,7 +1,28 @@
+import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 enum ShapeType { rect, ellipse, polygon, line, curve }
+
+class GradientStop {
+  double position;
+  Color color;
+
+  GradientStop({required this.position, required this.color});
+
+  Map<String, dynamic> toJson() => {
+        'position': position,
+        'color': color.toARGB32(),
+      };
+
+  factory GradientStop.fromJson(Map<String, dynamic> json) => GradientStop(
+        position: (json['position'] as num).toDouble(),
+        color: Color(json['color'] as int),
+      );
+
+  GradientStop copyWith({double? position, Color? color}) =>
+      GradientStop(position: position ?? this.position, color: color ?? this.color);
+}
 
 class Drawable {
   final String id;
@@ -14,6 +35,9 @@ class Drawable {
   bool isFilled;
   double rotation;
   bool selected;
+  bool isGradient;
+  List<GradientStop> gradientStops;
+  double gradientAngle;
 
   Drawable({
     required this.id,
@@ -26,7 +50,10 @@ class Drawable {
     this.isFilled = false,
     this.rotation = 0.0,
     this.selected = false,
-  });
+    this.isGradient = false,
+    List<GradientStop>? gradientStops,
+    this.gradientAngle = 0.0,
+  }) : gradientStops = gradientStops ?? [];
 
   Rect get bounds {
     if (points.isEmpty) return Rect.zero;
@@ -43,11 +70,22 @@ class Drawable {
 
   void draw(Canvas canvas, Paint paint) {
     final p = Paint()
-      ..color = color.withValues(alpha: opacity)
       ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..style = isFilled ? PaintingStyle.fill : PaintingStyle.stroke;
+
+    if (isGradient && gradientStops.length >= 2) {
+      if (isFilled || isShape) {
+        final path = _createShapePath();
+        if (path != null) {
+          final rect = path.getBounds();
+          p.shader = _createShader(rect);
+        }
+      }
+    } else {
+      p.color = color.withValues(alpha: opacity);
+    }
 
     if (!isShape || shapeType == null) {
       _drawStroke(canvas, p);
@@ -99,6 +137,40 @@ class Drawable {
     }
 
     canvas.restore();
+    p.shader = null;
+  }
+
+  ui.Path? _createShapePath() {
+    if (shapeType == null) return null;
+    switch (shapeType!) {
+      case ShapeType.rect:
+        return ui.Path()..addRect(bounds);
+      case ShapeType.ellipse:
+        return ui.Path()..addOval(bounds);
+      case ShapeType.line:
+        if (points.length < 2) return null;
+        return ui.Path()..moveTo(points.first.dx, points.first.dy)..lineTo(points.last.dx, points.last.dy);
+      case ShapeType.polygon:
+        if (points.length < 3) return null;
+        final path = ui.Path()..moveTo(points.first.dx, points.first.dy);
+        for (int i = 1; i < points.length; i++) { path.lineTo(points[i].dx, points[i].dy); }
+        path.close();
+        return path;
+      case ShapeType.curve:
+        return null;
+    }
+  }
+
+  Shader _createShader(Rect rect) {
+    final angleRad = gradientAngle * 3.14159265 / 180;
+    final dx = cos(angleRad);
+    final dy = sin(angleRad);
+    return LinearGradient(
+      begin: Alignment(-dx, -dy),
+      end: Alignment(dx, dy),
+      colors: gradientStops.map((s) => s.color.withValues(alpha: s.color.a * opacity)).toList(),
+      stops: gradientStops.map((s) => s.position).toList(),
+    ).createShader(rect);
   }
 
   Drawable copyWith({
@@ -112,6 +184,9 @@ class Drawable {
     bool? isFilled,
     double? rotation,
     bool? selected,
+    bool? isGradient,
+    List<GradientStop>? gradientStops,
+    double? gradientAngle,
   }) =>
       Drawable(
         id: id ?? this.id,
@@ -124,6 +199,9 @@ class Drawable {
         isFilled: isFilled ?? this.isFilled,
         rotation: rotation ?? this.rotation,
         selected: selected ?? this.selected,
+        isGradient: isGradient ?? this.isGradient,
+        gradientStops: gradientStops ?? List.from(this.gradientStops),
+        gradientAngle: gradientAngle ?? this.gradientAngle,
       );
 
   void _drawStroke(Canvas canvas, Paint paint) {

@@ -9,11 +9,11 @@ void main() async {
   runApp(
     EasyLocalization(
       supportedLocales: const [
-        Locale('zh', 'CN'),
-        Locale('en', 'US'),
+        Locale('zh'),
+        Locale('en'),
       ],
       path: 'assets/l10n',
-      fallbackLocale: const Locale('en', 'US'),
+      fallbackLocale: const Locale('en'),
       child: const HueCaiApp(),
     ),
   );

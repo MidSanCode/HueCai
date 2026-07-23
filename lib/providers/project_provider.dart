@@ -124,6 +124,33 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void saveSnapshot() {
+    if (_currentProject == null) return;
+    _historyService.pushEntry(HistoryEntry(
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      projectSnapshot: _currentProject!.toJson(),
+    ));
+  }
+
+  void undo() {
+    final snapshot = _historyService.undo();
+    if (snapshot != null) restoreFromSnapshot(snapshot);
+  }
+
+  void redo() {
+    final snapshot = _historyService.redo();
+    if (snapshot != null) restoreFromSnapshot(snapshot);
+  }
+
+  void restoreFromSnapshot(Map<String, dynamic> snapshot) {
+    if (_currentProject == null) return;
+    final restored = Project.fromJson(snapshot);
+    _currentProject!.layers = restored.layers;
+    _currentProject!.currentLayerIndex = restored.currentLayerIndex;
+    _hasUnsavedChanges = true;
+    notifyListeners();
+  }
+
   void _markChanged() {
     _hasUnsavedChanges = true;
     notifyListeners();
@@ -211,6 +238,12 @@ class ProjectProvider extends ChangeNotifier {
       }
     }
     notifyListeners();
+  }
+
+  void toggleFillDrawable(Drawable drawable, Color fillColor) {
+    drawable.isFilled = !drawable.isFilled;
+    drawable.color = fillColor;
+    _markChanged();
   }
 
   void selectDrawable(Drawable drawable) {

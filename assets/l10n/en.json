@@ -87,6 +87,7 @@
   "tool.brush": "Brush",
   "tool.eraser": "Eraser",
   "tool.fill": "Fill",
+  "tool.gradient": "Gradient",
   "tool.eyedropper": "Eyedropper",
   "layer.panel": "Layers",
   "layer.normal": "Normal",

@@ -11,6 +11,7 @@ enum ToolType {
   brush,
   eraser,
   fill,
+  gradient,
   eyedropper,
 }
 

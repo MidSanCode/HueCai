@@ -32,6 +32,7 @@ class ToolPanel extends StatelessWidget {
           _toolBtn(context, ToolType.brush, Icons.brush, 'tool.brush'),
           _toolBtn(context, ToolType.eraser, Icons.auto_fix_normal, 'tool.eraser'),
           _toolBtn(context, ToolType.fill, Icons.format_color_fill, 'tool.fill'),
+          _toolBtn(context, ToolType.gradient, Icons.gradient, 'tool.gradient'),
           _toolBtn(context, ToolType.eyedropper, Icons.colorize, 'tool.eyedropper'),
           const SizedBox(height: 8),
         ],

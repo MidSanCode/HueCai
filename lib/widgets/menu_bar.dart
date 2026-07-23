@@ -50,10 +50,10 @@ class _DesktopMenuBar extends StatelessWidget {
           ]),
           _MenuButton(label: 'menu.edit'.tr(), children: [
             _MenuItem('menu.edit.undo'.tr(), Icons.undo, () {
-              context.read<ProjectProvider>().history.undo();
+              context.read<ProjectProvider>().undo();
             }),
             _MenuItem('menu.edit.redo'.tr(), Icons.redo, () {
-              context.read<ProjectProvider>().history.redo();
+              context.read<ProjectProvider>().redo();
             }),
             _MenuItem('menu.edit.copy'.tr(), Icons.copy, () {}),
             _MenuItem('menu.edit.paste'.tr(), Icons.content_paste, () {}),
@@ -166,10 +166,10 @@ class _MobileMenuBar extends StatelessWidget {
             context.read<ProjectProvider>().saveProject();
           }),
           _MobileBtn(Icons.undo, 'menu.edit.undo'.tr(), () {
-            context.read<ProjectProvider>().history.undo();
+            context.read<ProjectProvider>().undo();
           }),
           _MobileBtn(Icons.redo, 'menu.edit.redo'.tr(), () {
-            context.read<ProjectProvider>().history.redo();
+            context.read<ProjectProvider>().redo();
           }),
           const Spacer(),
           PopupMenuButton<String>(

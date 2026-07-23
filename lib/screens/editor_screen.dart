@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:easy_localization/easy_localization.dart';
 import '../providers/project_provider.dart';
@@ -92,28 +93,39 @@ class _EditorScreenState extends State<EditorScreen> {
         ChangeNotifierProvider.value(value: _toolProvider),
         ChangeNotifierProvider.value(value: _canvasProvider),
       ],
-      child: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) async {
-          if (didPop) return;
-          final shouldPop = await _onWillPop();
-          if (shouldPop && context.mounted) {
-            Navigator.of(context).pop();
-          }
+      child: CallbackShortcuts(
+        bindings: {
+          SingleActivator(LogicalKeyboardKey.keyZ, control: true):
+              () => context.read<ProjectProvider>().undo(),
+          SingleActivator(LogicalKeyboardKey.keyY, control: true):
+              () => context.read<ProjectProvider>().redo(),
         },
-        child: Scaffold(
-          body: SafeArea(
-            child: Column(
-              children: [
-                const EditorMenuBar(),
-                Expanded(
-                  child: isDesktop
-                      ? _DesktopLayout(project: project)
-                      : _MobileLayout(project: project),
+        child: Focus(
+          autofocus: true,
+          child: PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, _) async {
+              if (didPop) return;
+              final shouldPop = await _onWillPop();
+              if (shouldPop && context.mounted) {
+                Navigator.of(context).pop();
+              }
+            },
+            child: Scaffold(
+              body: SafeArea(
+                child: Column(
+                  children: [
+                    const EditorMenuBar(),
+                    Expanded(
+                      child: isDesktop
+                          ? _DesktopLayout(project: project)
+                          : _MobileLayout(project: project),
+                    ),
+                    if (!isDesktop)
+                      _mobileBottomBar(_canvasProvider),
+                  ],
                 ),
-                if (!isDesktop)
-                  _mobileBottomBar(_canvasProvider),
-              ],
+              ),
             ),
           ),
         ),
@@ -131,10 +143,10 @@ Widget _mobileBottomBar(CanvasProvider canvasProvider) {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           IconButton(icon: const Icon(Icons.undo), onPressed: () {
-            context.read<ProjectProvider>().history.undo();
+            context.read<ProjectProvider>().undo();
           }, tooltip: 'menu.edit.undo'.tr()),
           IconButton(icon: const Icon(Icons.redo), onPressed: () {
-            context.read<ProjectProvider>().history.redo();
+            context.read<ProjectProvider>().redo();
           }, tooltip: 'menu.edit.redo'.tr()),
           IconButton(icon: const Icon(Icons.zoom_in), onPressed: canvasProvider.zoomIn, tooltip: 'menu.view.zoom_in'.tr()),
           IconButton(icon: const Icon(Icons.zoom_out), onPressed: canvasProvider.zoomOut, tooltip: 'menu.view.zoom_out'.tr()),
