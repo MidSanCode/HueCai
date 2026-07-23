@@ -7,10 +7,9 @@ allprojects {
 
 subprojects {
     afterEvaluate {
-        if (project.extensions.findByName("android") != null) {
-            project.extensions.configure<com.android.build.api.dsl.CommonExtension<*, *, *, *>>("android") {
-                compileSdk = 36
-            }
+        val ext = project.extensions.findByType(com.android.build.gradle.BaseExtension::class.java)
+        if (ext != null) {
+            ext.setCompileSdk(36)
         }
     }
 }
