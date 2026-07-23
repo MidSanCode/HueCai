@@ -30,8 +30,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
   bool _dragConfirmed = false;
   bool _isScaling = false;
   DateTime? _scaleEndTime;
-  static const double _dragThreshold = 4.0;
-  static const Duration _scaleCooldown = Duration(milliseconds: 200);
+  static const double _dragThreshold = 8.0;
+  static const Duration _scaleCooldown = Duration(milliseconds: 400);
 
   final _log = AppLogger();
 
@@ -281,11 +281,16 @@ class _PaintCanvasState extends State<PaintCanvas> {
             onScaleStart: (details) {
               if (details.pointerCount >= 2) {
                 _isScaling = true;
+                _scaleEndTime = null;
+                // Cancel any pending single-finger drawing state
+                _downScreenPos = null;
+                _dragConfirmed = false;
                 _handleMultiTouch(details.pointerCount);
                 return;
               }
-              // Ignore single-finger immediately after multi-touch
-              if (_isScaling || _scaleEndTime != null &&
+              // Ignore single-finger immediately after multi-touch cooldown
+              if (_isScaling) return;
+              if (_scaleEndTime != null &&
                   DateTime.now().difference(_scaleEndTime!) < _scaleCooldown) {
                 return;
               }
@@ -296,12 +301,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
             onScaleUpdate: (details) {
               if (details.pointerCount >= 2) {
                 _isScaling = true;
+                _scaleEndTime = null;
                 cp.panBy(details.focalPointDelta);
                 cp.zoomBy(details.scale, details.focalPoint);
                 cp.rotateBy(details.rotation);
               } else {
-                if (_isScaling) {
-                  // Transitioning from multi-touch to single — ignore
+                if (_isScaling) return;
+                if (_scaleEndTime != null &&
+                    DateTime.now().difference(_scaleEndTime!) < _scaleCooldown) {
                   return;
                 }
                 if (isMoveTool && !hasSelection) {
@@ -312,7 +319,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
               }
             },
             onScaleEnd: (details) {
-              if (details.pointerCount >= 2) {
+              if (_isScaling) {
                 _isScaling = false;
                 _scaleEndTime = DateTime.now();
               }
