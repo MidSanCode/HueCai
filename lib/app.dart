@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
 import 'providers/project_provider.dart';
+import 'providers/app_settings.dart';
 import 'screens/workspace_screen.dart';
 
 class HueCaiApp extends StatelessWidget {
@@ -9,8 +10,11 @@ class HueCaiApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => ProjectProvider(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ProjectProvider()),
+        ChangeNotifierProvider(create: (_) => AppSettings()),
+      ],
       child: _AppContent(),
     );
   }
@@ -19,6 +23,7 @@ class HueCaiApp extends StatelessWidget {
 class _AppContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final settings = context.watch<AppSettings>();
     return MaterialApp(
       title: '绘彩',
       localizationsDelegates: context.localizationDelegates,
@@ -41,7 +46,7 @@ class _AppContent extends StatelessWidget {
         ),
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      themeMode: ThemeMode.system,
+      themeMode: settings.themeMode,
       home: const WorkspaceScreen(),
     );
   }

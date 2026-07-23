@@ -21,21 +21,25 @@ class PaintCanvas extends StatefulWidget {
 class _PaintCanvasState extends State<PaintCanvas> {
   Drawable? _currentDrawable;
 
-  Offset _toCanvas(Offset screenPos) {
+  Offset _toCanvas(Offset screenPos, Size areaSize) {
     final cp = context.read<CanvasProvider>();
-    final dx = (screenPos.dx - cp.offset.dx - widget.project.settings.width / 2) / cp.scale;
-    final dy = (screenPos.dy - cp.offset.dy - widget.project.settings.height / 2) / cp.scale;
+    final w = widget.project.settings.width / 2;
+    final h = widget.project.settings.height / 2;
+    final cx = areaSize.width / 2;
+    final cy = areaSize.height / 2;
+    double x = screenPos.dx - cp.offset.dx - cx;
+    double y = screenPos.dy - cp.offset.dy - cy;
     final cosV = cos(cp.rotation);
     final sinV = sin(cp.rotation);
-    final rx = dx * cosV + dy * sinV + widget.project.settings.width / 2;
-    final ry = -dx * sinV + dy * cosV + widget.project.settings.height / 2;
-    return Offset(rx, ry);
+    final rx = x * cosV + y * sinV;
+    final ry = -x * sinV + y * cosV;
+    return Offset(rx / cp.scale + w, ry / cp.scale + h);
   }
 
-  void _onPointerDown(Offset pos) {
+  void _onPointerDown(Offset pos, Size areaSize) {
     final tp = context.read<ToolProvider>();
     final pp = context.read<ProjectProvider>();
-    final canvasPos = _toCanvas(pos);
+    final canvasPos = _toCanvas(pos, areaSize);
 
     if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
       final drawable = Drawable(
@@ -68,11 +72,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
   }
 
-  void _onPointerMove(Offset pos) {
+  void _onPointerMove(Offset pos, Size areaSize) {
     if (_currentDrawable == null) return;
     final tp = context.read<ToolProvider>();
     final pp = context.read<ProjectProvider>();
-    final canvasPos = _toCanvas(pos);
+    final canvasPos = _toCanvas(pos, areaSize);
 
     if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
       _currentDrawable!.points.add(canvasPos);
@@ -84,10 +88,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
   }
 
-  void _onPointerUp(Offset pos) {
+  void _onPointerUp() {
     if (_currentDrawable != null) {
       final pp = context.read<ProjectProvider>();
-      _currentDrawable!.selected = true;
+      if (_currentDrawable!.isShape) {
+        _currentDrawable!.selected = true;
+      }
       pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
     }
     _currentDrawable = null;
@@ -140,65 +146,88 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.watch<ProjectProvider>();
     final isMoveTool = tp.currentTool == ToolType.move;
     final hasSelection = pp.selectedDrawable != null;
+    final pw = widget.project.settings.width.toDouble();
+    final ph = widget.project.settings.height.toDouble();
 
-    return Listener(
-      onPointerSignal: (event) {
-        if (event is PointerScrollEvent) {
-          cp.handleScroll(event);
-        }
-      },
-      child: GestureDetector(
-        onScaleStart: (details) {
-          if (details.pointerCount == 1) {
-            if (!isMoveTool || hasSelection) {
-              _onPointerDown(details.focalPoint);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final areaSize = Size(constraints.maxWidth, constraints.maxHeight);
+        return Listener(
+          onPointerSignal: (event) {
+            if (event is PointerScrollEvent) {
+              cp.handleScroll(event);
             }
-          }
-        },
-        onScaleUpdate: (details) {
-          if (details.pointerCount >= 2) {
-            cp.panBy(details.focalPointDelta);
-            cp.zoomBy(details.scale, details.focalPoint);
-            cp.rotateBy(details.rotation);
-          } else {
-            if (isMoveTool && !hasSelection) {
-              cp.panBy(details.focalPointDelta);
-            } else {
-              _onPointerMove(details.focalPoint);
-            }
-          }
-        },
-        onScaleEnd: (details) {
-          if (_currentDrawable != null) {
-            _onPointerUp(Offset.zero);
-            _currentDrawable = null;
-          }
-        },
-        child: Transform(
-          transform: Matrix4.identity()
-            ..translateByDouble(cp.offset.dx, cp.offset.dy, 0, 1)
-            ..translateByDouble(
-                widget.project.settings.width / 2,
-                widget.project.settings.height / 2, 0, 1)
-            ..rotateZ(cp.rotation)
-            ..scaleByDouble(cp.scale, cp.scale, cp.scale, 1)
-            ..translateByDouble(
-                -widget.project.settings.width / 2,
-                -widget.project.settings.height / 2, 0, 1),
-          child: CustomPaint(
-            painter: _CanvasPainter(
-              project: widget.project,
-              currentDrawable: _currentDrawable,
-            ),
+          },
+          child: GestureDetector(
+            onScaleStart: (details) {
+              if (details.pointerCount == 1) {
+                if (!isMoveTool || hasSelection) {
+                  _onPointerDown(details.focalPoint, areaSize);
+                }
+              }
+            },
+            onScaleUpdate: (details) {
+              if (details.pointerCount >= 2) {
+                cp.panBy(details.focalPointDelta);
+                cp.zoomBy(details.scale, details.focalPoint);
+                cp.rotateBy(details.rotation);
+              } else {
+                if (isMoveTool && !hasSelection) {
+                  cp.panBy(details.focalPointDelta);
+                } else {
+                  _onPointerMove(details.focalPoint, areaSize);
+                }
+              }
+            },
+            onScaleEnd: (details) {
+              if (_currentDrawable != null) {
+                _onPointerUp();
+              }
+            },
             child: SizedBox(
-              width: widget.project.settings.width.toDouble(),
-              height: widget.project.settings.height.toDouble(),
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+              child: ClipRect(
+                child: CustomPaint(
+                  size: areaSize,
+                  painter: _BackgroundPainter(),
+                  child: Transform(
+                    transform: Matrix4.identity()
+                      ..translateByDouble(
+                          areaSize.width / 2 + cp.offset.dx,
+                          areaSize.height / 2 + cp.offset.dy, 0, 1)
+                      ..rotateZ(cp.rotation)
+                      ..scaleByDouble(cp.scale, cp.scale, cp.scale, 1)
+                      ..translateByDouble(-pw / 2, -ph / 2, 0, 1),
+                    child: CustomPaint(
+                      painter: _CanvasPainter(
+                        project: widget.project,
+                        currentDrawable: _currentDrawable,
+                      ),
+                      child: SizedBox(width: pw, height: ph),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
+}
+
+class _BackgroundPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      Paint()..color = const Color(0xFF2D2D2D),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_BackgroundPainter old) => false;
 }
 
 class _CanvasPainter extends CustomPainter {

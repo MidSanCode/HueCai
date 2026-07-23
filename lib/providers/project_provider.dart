@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../models/project.dart';
@@ -6,6 +7,8 @@ import '../models/layer.dart';
 import '../models/drawable.dart';
 import '../services/project_service.dart';
 import '../services/history_service.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 
 class ProjectProvider extends ChangeNotifier {
   final ProjectService _projectService = ProjectService();
@@ -15,11 +18,44 @@ class ProjectProvider extends ChangeNotifier {
   Project? _currentProject;
   List<Project> _recentProjects = [];
   bool _loading = false;
+  bool _hasUnsavedChanges = false;
+  Timer? _backupTimer;
 
   Project? get currentProject => _currentProject;
   List<Project> get recentProjects => _recentProjects;
   HistoryService get history => _historyService;
   bool get loading => _loading;
+  bool get hasUnsavedChanges => _hasUnsavedChanges;
+
+  void startBackupTimer() {
+    _backupTimer?.cancel();
+    _backupTimer = Timer.periodic(const Duration(minutes: 2), (_) => _autoBackup());
+  }
+
+  void stopBackupTimer() {
+    _backupTimer?.cancel();
+    _backupTimer = null;
+  }
+
+  Future<void> _autoBackup() async {
+    if (_currentProject == null || !_hasUnsavedChanges) return;
+    try {
+      final dir = await getTemporaryDirectory();
+      final backupDir = Directory('${dir.path}/huecai_backups');
+      if (!await backupDir.exists()) await backupDir.create();
+      final backupPath = '${backupDir.path}/${_currentProject!.id}_backup.hcp';
+      await _projectService.saveProject(_currentProject!, _historyService,
+          filePath: backupPath);
+    } catch (_) {}
+  }
+
+  Future<String?> getBackupPath() async {
+    final dir = await getTemporaryDirectory();
+    final backupPath = '${dir.path}/huecai_backups/${_currentProject!.id}_backup.hcp';
+    final file = File(backupPath);
+    if (await file.exists()) return backupPath;
+    return null;
+  }
 
   Future<void> loadRecentProjects() async {
     _loading = true;
@@ -49,6 +85,7 @@ class ProjectProvider extends ChangeNotifier {
       channelDepth: channelDepth,
       iccProfileData: iccProfileData,
     );
+    _hasUnsavedChanges = true;
     _historyService.clear();
     notifyListeners();
   }
@@ -57,6 +94,7 @@ class ProjectProvider extends ChangeNotifier {
     final project = await _projectService.loadProject(filePath);
     if (project != null) {
       _currentProject = project;
+      _hasUnsavedChanges = false;
       _historyService.clear();
       notifyListeners();
     }
@@ -65,6 +103,7 @@ class ProjectProvider extends ChangeNotifier {
   Future<void> saveProject() async {
     if (_currentProject == null) return;
     await _projectService.saveProject(_currentProject!, _historyService);
+    _hasUnsavedChanges = false;
     notifyListeners();
   }
 
@@ -78,8 +117,15 @@ class ProjectProvider extends ChangeNotifier {
   }
 
   void closeProject() {
+    stopBackupTimer();
     _currentProject = null;
+    _hasUnsavedChanges = false;
     _historyService.clear();
+    notifyListeners();
+  }
+
+  void _markChanged() {
+    _hasUnsavedChanges = true;
     notifyListeners();
   }
 
@@ -98,6 +144,43 @@ class ProjectProvider extends ChangeNotifier {
     );
     _currentProject!.layers.add(layer);
     _currentProject!.currentLayerIndex = _currentProject!.layers.length - 1;
+    _markChanged();
+  }
+
+  void deleteLayer(int index) {
+    if (_currentProject == null || _currentProject!.layers.length <= 1) return;
+    _currentProject!.layers.removeAt(index);
+    if (_currentProject!.currentLayerIndex >= _currentProject!.layers.length) {
+      _currentProject!.currentLayerIndex = _currentProject!.layers.length - 1;
+    }
+    _markChanged();
+  }
+
+  void duplicateLayer(int index) {
+    if (_currentProject == null) return;
+    final original = _currentProject!.layers[index];
+    final copy = original.copyWith(
+      id: _uuid.v4(),
+      name: '${original.name} copy',
+      drawables: original.drawables.map((d) => d.copyWith()).toList(),
+    );
+    _currentProject!.layers.insert(index + 1, copy);
+    _markChanged();
+  }
+
+  void mergeDownLayer(int index) {
+    if (_currentProject == null || index <= 0) return;
+    final below = _currentProject!.layers[index - 1];
+    final above = _currentProject!.layers[index];
+    below.drawables.addAll(above.drawables);
+    _currentProject!.layers.removeAt(index);
+    setCurrentLayer(index - 1);
+    _markChanged();
+  }
+
+  void setLayerOpacity(int index, double opacity) {
+    if (_currentProject == null || index >= _currentProject!.layers.length) return;
+    _currentProject!.layers[index].opacity = opacity.clamp(0.0, 1.0);
     notifyListeners();
   }
 
@@ -106,7 +189,7 @@ class ProjectProvider extends ChangeNotifier {
     final current = _currentProject!.currentLayer;
     if (current == null || current.locked) return;
     current.drawables.add(drawable);
-    notifyListeners();
+    _markChanged();
   }
 
   void updateDrawable(String drawableId, Drawable updated) {
@@ -116,7 +199,7 @@ class ProjectProvider extends ChangeNotifier {
     final idx = current.drawables.indexWhere((d) => d.id == drawableId);
     if (idx != -1) {
       current.drawables[idx] = updated;
-      notifyListeners();
+      _markChanged();
     }
   }
 

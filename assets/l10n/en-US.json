@@ -158,5 +158,10 @@
   "settings.language": "Language",
   "settings.canvas": "Canvas",
   "settings.about": "About",
-  "layers.add": "New Layer"
+  "layers.add": "New Layer",
+  "unsaved.title": "Unsaved Changes",
+  "unsaved.body": "Do you want to save changes to the project?",
+  "unsaved.save": "Save",
+  "unsaved.discard": "Discard",
+  "unsaved.cancel": "Cancel"
 }

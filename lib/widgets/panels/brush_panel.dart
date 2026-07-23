@@ -4,15 +4,8 @@ import 'package:provider/provider.dart';
 import '../../providers/tool_provider.dart';
 import '../../models/brush.dart';
 
-class BrushPanel extends StatefulWidget {
+class BrushPanel extends StatelessWidget {
   const BrushPanel({super.key});
-
-  @override
-  State<BrushPanel> createState() => _BrushPanelState();
-}
-
-class _BrushPanelState extends State<BrushPanel> {
-  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
@@ -27,80 +20,67 @@ class _BrushPanelState extends State<BrushPanel> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                InkWell(
-                  onTap: () => setState(() => _expanded = !_expanded),
-                  child: Row(
-                    children: [
-                      Text('brush.panel'.tr(), style: theme.textTheme.labelMedium),
-                      const Spacer(),
-                      Icon(
-                        _expanded ? Icons.expand_less : Icons.expand_more,
-                        size: 18,
-                      ),
-                    ],
+                Text('brush.panel'.tr(), style: theme.textTheme.labelMedium),
+                const SizedBox(height: 6),
+                SizedBox(
+                  height: 32,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: Brush.defaults().length,
+                    itemBuilder: (ctx, i) {
+                      final brush = Brush.defaults()[i];
+                      final selected = provider.currentBrush.type == brush.type;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: ChoiceChip(
+                          label: Text(brush.nameKey.tr(), style: const TextStyle(fontSize: 10)),
+                          selected: selected,
+                          onSelected: (_) => provider.setBrush(brush),
+                          visualDensity: VisualDensity.compact,
+                          labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                      );
+                    },
                   ),
                 ),
-                if (_expanded) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: 36,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: Brush.defaults().length,
-                      itemBuilder: (ctx, i) {
-                        final brush = Brush.defaults()[i];
-                        final selected = provider.currentBrush.type == brush.type;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: ChoiceChip(
-                            label: Text(brush.nameKey.tr(), style: const TextStyle(fontSize: 11)),
-                            selected: selected,
-                            onSelected: (_) => provider.setBrush(brush),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Text('brush.size'.tr(), style: const TextStyle(fontSize: 11)),
-                      Expanded(
-                        child: Slider(
-                          value: provider.brushSize,
-                          min: 1,
-                          max: 200,
-                          divisions: 199,
-                          label: '${provider.brushSize.round()}',
-                          onChanged: (v) => provider.setBrushSize(v),
-                        ),
-                      ),
-                      Text('${provider.brushSize.round()}', style: const TextStyle(fontSize: 11)),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      Text('brush.opacity'.tr(), style: const TextStyle(fontSize: 11)),
-                      Expanded(
-                        child: Slider(
-                          value: provider.brushOpacity,
-                          min: 0.0,
-                          max: 1.0,
-                          divisions: 100,
-                          label: '${(provider.brushOpacity * 100).round()}%',
-                          onChanged: (v) => provider.setBrushOpacity(v),
-                        ),
-                      ),
-                      Text('${(provider.brushOpacity * 100).round()}%', style: const TextStyle(fontSize: 11)),
-                    ],
-                  ),
-                ],
+                const SizedBox(height: 6),
+                _sliderRow('brush.size'.tr(), provider.brushSize, 1, 200,
+                    (v) => provider.setBrushSize(v),
+                    '${provider.brushSize.round()}'),
+                _sliderRow('brush.opacity'.tr(), provider.brushOpacity, 0, 1,
+                    (v) => provider.setBrushOpacity(v),
+                    '${(provider.brushOpacity * 100).round()}%'),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _sliderRow(String label, double value, double min, double max,
+      ValueChanged<double> onChanged, String display) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 50,
+          child: Text(label, style: const TextStyle(fontSize: 10)),
+        ),
+        Expanded(
+          child: Slider(
+            value: value,
+            min: min,
+            max: max,
+            divisions: max > 1 ? (max - min).round() : 100,
+            label: display,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(
+          width: 30,
+          child: Text(display, style: const TextStyle(fontSize: 10), textAlign: TextAlign.right),
+        ),
+      ],
     );
   }
 }

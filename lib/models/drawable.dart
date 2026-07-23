@@ -101,6 +101,31 @@ class Drawable {
     canvas.restore();
   }
 
+  Drawable copyWith({
+    String? id,
+    bool? isShape,
+    ShapeType? shapeType,
+    List<Offset>? points,
+    Color? color,
+    double? strokeWidth,
+    double? opacity,
+    bool? isFilled,
+    double? rotation,
+    bool? selected,
+  }) =>
+      Drawable(
+        id: id ?? this.id,
+        isShape: isShape ?? this.isShape,
+        shapeType: shapeType ?? this.shapeType,
+        points: points ?? List.from(this.points),
+        color: color ?? this.color,
+        strokeWidth: strokeWidth ?? this.strokeWidth,
+        opacity: opacity ?? this.opacity,
+        isFilled: isFilled ?? this.isFilled,
+        rotation: rotation ?? this.rotation,
+        selected: selected ?? this.selected,
+      );
+
   void _drawStroke(Canvas canvas, Paint paint) {
     if (points.length < 2) return;
     final path = ui.Path()..moveTo(points.first.dx, points.first.dy);

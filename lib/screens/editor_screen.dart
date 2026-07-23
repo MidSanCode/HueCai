@@ -27,13 +27,48 @@ class _EditorScreenState extends State<EditorScreen> {
     super.initState();
     _canvasProvider = CanvasProvider();
     _toolProvider = ToolProvider();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<ProjectProvider>().startBackupTimer();
+    });
   }
 
   @override
   void dispose() {
+    context.read<ProjectProvider>().stopBackupTimer();
     _canvasProvider.dispose();
     _toolProvider.dispose();
     super.dispose();
+  }
+
+  Future<bool> _onWillPop() async {
+    final pp = context.read<ProjectProvider>();
+    if (!pp.hasUnsavedChanges) return true;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('unsaved.title'.tr()),
+        content: Text('unsaved.body'.tr()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('cancel'),
+            child: Text('unsaved.cancel'.tr()),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('discard'),
+            child: Text('unsaved.discard'.tr()),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('save'),
+            child: Text('unsaved.save'.tr()),
+          ),
+        ],
+      ),
+    );
+    if (result == 'save') {
+      await pp.saveProject();
+      return true;
+    }
+    return result == 'discard';
   }
 
   @override
@@ -57,19 +92,29 @@ class _EditorScreenState extends State<EditorScreen> {
         ChangeNotifierProvider.value(value: _toolProvider),
         ChangeNotifierProvider.value(value: _canvasProvider),
       ],
-      child: Scaffold(
-        body: SafeArea(
-          child: Column(
-            children: [
-              const EditorMenuBar(),
-              Expanded(
-                child: isDesktop
-                    ? _DesktopLayout(project: project)
-                    : _MobileLayout(project: project),
-              ),
-              if (!isDesktop)
-                _mobileBottomBar(_canvasProvider),
-            ],
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (didPop) return;
+          final shouldPop = await _onWillPop();
+          if (shouldPop && context.mounted) {
+            Navigator.of(context).pop();
+          }
+        },
+        child: Scaffold(
+          body: SafeArea(
+            child: Column(
+              children: [
+                const EditorMenuBar(),
+                Expanded(
+                  child: isDesktop
+                      ? _DesktopLayout(project: project)
+                      : _MobileLayout(project: project),
+                ),
+                if (!isDesktop)
+                  _mobileBottomBar(_canvasProvider),
+              ],
+            ),
           ),
         ),
       ),
@@ -112,7 +157,52 @@ class _DesktopLayout extends StatelessWidget {
     final toolProvider = context.watch<ToolProvider>();
     return Row(
       children: [
-        ToolPanel(toolProvider: toolProvider),
+        Column(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () {
+                final pp = context.read<ProjectProvider>();
+                if (pp.hasUnsavedChanges) {
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: Text('unsaved.title'.tr()),
+                      content: Text('unsaved.body'.tr()),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          child: Text('unsaved.cancel'.tr()),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            pp.closeProject();
+                            Navigator.of(ctx).pop();
+                            Navigator.of(context).pop();
+                          },
+                          child: Text('unsaved.discard'.tr()),
+                        ),
+                        FilledButton(
+                          onPressed: () async {
+                            final nav = Navigator.of(context);
+                            await pp.saveProject();
+                            if (ctx.mounted) Navigator.of(ctx).pop();
+                            nav.pop();
+                          },
+                          child: Text('unsaved.save'.tr()),
+                        ),
+                      ],
+                    ),
+                  );
+                } else {
+                  Navigator.of(context).pop();
+                }
+              },
+              tooltip: '返回工作区',
+            ),
+            Expanded(child: ToolPanel(toolProvider: toolProvider)),
+          ],
+        ),
         Expanded(
           child: Padding(
             padding: const EdgeInsets.all(8),
@@ -163,7 +253,43 @@ class _MobileLayout extends StatelessWidget {
 Widget _backButton(BuildContext context) {
   return FloatingActionButton.small(
     heroTag: 'back',
-    onPressed: () => Navigator.of(context).pop(),
+    onPressed: () {
+      final pp = context.read<ProjectProvider>();
+      if (pp.hasUnsavedChanges) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text('unsaved.title'.tr()),
+            content: Text('unsaved.body'.tr()),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: Text('unsaved.cancel'.tr()),
+              ),
+              TextButton(
+                onPressed: () {
+                  pp.closeProject();
+                  Navigator.of(ctx).pop();
+                  Navigator.of(context).pop();
+                },
+                child: Text('unsaved.discard'.tr()),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final nav = Navigator.of(context);
+                  await pp.saveProject();
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                  nav.pop();
+                },
+                child: Text('unsaved.save'.tr()),
+              ),
+            ],
+          ),
+        );
+      } else {
+        Navigator.of(context).pop();
+      }
+    },
     child: const Icon(Icons.arrow_back),
   );
 }

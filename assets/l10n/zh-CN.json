@@ -158,5 +158,10 @@
   "settings.language": "语言",
   "settings.canvas": "画布",
   "settings.about": "关于",
-  "layers.add": "新建图层"
+  "layers.add": "新建图层",
+  "unsaved.title": "未保存的更改",
+  "unsaved.body": "是否保存对项目的更改？",
+  "unsaved.save": "保存",
+  "unsaved.discard": "不保存",
+  "unsaved.cancel": "取消"
 }

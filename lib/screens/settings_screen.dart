@@ -1,22 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_settings.dart';
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  bool _darkMode = false;
-  String _language = 'zh';
-
-  @override
   Widget build(BuildContext context) {
+    final settings = context.watch<AppSettings>();
+    final locale = context.locale;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('设置'),
+        title: Text('app.name'.tr()),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
@@ -25,18 +22,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         children: [
           const SizedBox(height: 8),
-          _sectionHeader('外观'),
+          _sectionHeader(context, '外观'),
           SwitchListTile(
-            title: const Text('深色模式'),
-            subtitle: const Text('切换深色/浅色主题'),
-            value: _darkMode,
-            onChanged: (v) => setState(() => _darkMode = v),
+            title: Text('深色模式'),
+            subtitle: Text(settings.themeMode == ThemeMode.dark ? "当前: 深色" : settings.themeMode == ThemeMode.light ? "当前: 浅色" : "当前: 跟随系统"),
+            value: settings.themeMode == ThemeMode.dark,
+            onChanged: (v) {
+              final mode = v ? ThemeMode.dark : ThemeMode.light;
+              settings.setThemeMode(mode);
+            },
+          ),
+          ListTile(
+            title: Text('主题模式'),
+            subtitle: Text(settings.themeMode == ThemeMode.dark
+                ? '深色'
+                : settings.themeMode == ThemeMode.light
+                    ? '浅色'
+                    : '跟随系统'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (ctx) => SimpleDialog(
+                  title: const Text('选择主题'),
+                  children: [
+                    SimpleDialogOption(
+                      onPressed: () {
+                        settings.setThemeMode(ThemeMode.light);
+                        Navigator.of(ctx).pop();
+                      },
+                      child: Text('浅色', style: TextStyle(
+                        fontWeight: settings.themeMode == ThemeMode.light
+                            ? FontWeight.bold : FontWeight.normal,
+                      )),
+                    ),
+                    SimpleDialogOption(
+                      onPressed: () {
+                        settings.setThemeMode(ThemeMode.dark);
+                        Navigator.of(ctx).pop();
+                      },
+                      child: Text('深色', style: TextStyle(
+                        fontWeight: settings.themeMode == ThemeMode.dark
+                            ? FontWeight.bold : FontWeight.normal,
+                      )),
+                    ),
+                    SimpleDialogOption(
+                      onPressed: () {
+                        settings.setThemeMode(ThemeMode.system);
+                        Navigator.of(ctx).pop();
+                      },
+                      child: Text('跟随系统', style: TextStyle(
+                        fontWeight: settings.themeMode == ThemeMode.system
+                            ? FontWeight.bold : FontWeight.normal,
+                      )),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
           const Divider(),
-          _sectionHeader('语言'),
+          _sectionHeader(context, '语言'),
           ListTile(
-            title: const Text('语言'),
-            subtitle: Text(_language == 'zh' ? '中文' : 'English'),
+            title: Text('语言'),
+            subtitle: Text(locale.languageCode == 'zh' ? '中文' : 'English'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               showDialog(
@@ -46,20 +95,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     SimpleDialogOption(
                       onPressed: () {
-                        setState(() => _language = 'zh');
+                        context.setLocale(const Locale('zh'));
+                        settings.setLanguageCode('zh');
                         Navigator.of(ctx).pop();
                       },
                       child: Text('中文', style: TextStyle(
-                        fontWeight: _language == 'zh' ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: locale.languageCode == 'zh'
+                            ? FontWeight.bold : FontWeight.normal,
                       )),
                     ),
                     SimpleDialogOption(
                       onPressed: () {
-                        setState(() => _language = 'en');
+                        context.setLocale(const Locale('en'));
+                        settings.setLanguageCode('en');
                         Navigator.of(ctx).pop();
                       },
                       child: Text('English', style: TextStyle(
-                        fontWeight: _language == 'en' ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: locale.languageCode == 'en'
+                            ? FontWeight.bold : FontWeight.normal,
                       )),
                     ),
                   ],
@@ -68,14 +121,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           const Divider(),
-          _sectionHeader('画布'),
+          _sectionHeader(context, '画布'),
           ListTile(
-            title: const Text('默认分辨率'),
+            title: Text('默认分辨率'),
             subtitle: const Text('72 DPI'),
             trailing: const Icon(Icons.chevron_right),
           ),
           const Divider(),
-          _sectionHeader('关于'),
+          _sectionHeader(context, '关于'),
           ListTile(
             title: Text('app.name'.tr()),
             subtitle: const Text('版本 1.0.0'),
@@ -85,7 +138,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _sectionHeader(String title) {
+  Widget _sectionHeader(BuildContext context, String title) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Text(title,

@@ -33,8 +33,6 @@ class ToolPanel extends StatelessWidget {
           _toolBtn(context, ToolType.eraser, Icons.auto_fix_normal, 'tool.eraser'),
           _toolBtn(context, ToolType.fill, Icons.format_color_fill, 'tool.fill'),
           _toolBtn(context, ToolType.eyedropper, Icons.colorize, 'tool.eyedropper'),
-          const Spacer(),
-          _standardModeToggle(context),
           const SizedBox(height: 8),
         ],
       ),
@@ -109,54 +107,32 @@ class ToolPanel extends StatelessWidget {
     ];
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: shapes.map((s) {
-          return ListTile(
-            leading: Icon(s.$2),
-            title: Text(s.$3),
-            selected: toolProvider.currentShape == s.$1,
-            onTap: () {
-              toolProvider.setShape(s.$1);
-              Navigator.of(ctx).pop();
-            },
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _standardModeToggle(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      child: Tooltip(
-        message: '标准模式',
-        child: InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => toolProvider.toggleStandardMode(),
-          child: Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: toolProvider.isStandardMode
-                  ? theme.colorScheme.tertiaryContainer
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: toolProvider.isStandardMode
-                    ? theme.colorScheme.tertiary
-                    : theme.colorScheme.outlineVariant,
-                width: 1,
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ...shapes.map((s) {
+              return ListTile(
+                leading: Icon(s.$2),
+                title: Text(s.$3),
+                selected: toolProvider.currentShape == s.$1,
+                onTap: () {
+                  toolProvider.setShape(s.$1);
+                  Navigator.of(ctx).pop();
+                },
+              );
+            }),
+            const Divider(),
+            SwitchListTile(
+              title: Text('标准模式'),
+              subtitle: Text('对齐角度和比例'),
+              value: toolProvider.isStandardMode,
+              onChanged: (_) {
+                toolProvider.toggleStandardMode();
+                setState(() {});
+              },
             ),
-            child: Icon(
-              Icons.checklist,
-              size: 20,
-              color: toolProvider.isStandardMode
-                  ? theme.colorScheme.onTertiaryContainer
-                  : theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
+          ],
         ),
       ),
     );
