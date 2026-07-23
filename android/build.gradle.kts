@@ -7,8 +7,8 @@ allprojects {
 
 subprojects {
     afterEvaluate {
-        if (project.extensions.findByType(com.android.build.gradle.BaseExtension::class.java) != null) {
-            extensions.configure(com.android.build.gradle.BaseExtension::class.java) {
+        if (project.extensions.findByName("android") != null) {
+            project.extensions.configure<com.android.build.api.dsl.CommonExtension<*, *, *, *>>("android") {
                 compileSdk = 36
             }
         }
