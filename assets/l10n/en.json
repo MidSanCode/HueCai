@@ -1,5 +1,8 @@
 {
   "app.name": "HueCai",
+  "app.exit": "Exit",
+  "app.show_panels": "Show Panels",
+  "app.hide_panels": "Hide Panels",
   "workspace.title": "Workspace",
   "workspace.new": "New",
   "workspace.open": "Open",

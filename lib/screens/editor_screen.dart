@@ -22,6 +22,7 @@ class EditorScreen extends StatefulWidget {
 class _EditorScreenState extends State<EditorScreen> {
   late final CanvasProvider _canvasProvider;
   late final ToolProvider _toolProvider;
+  bool _showRightPanel = false;
 
   @override
   void initState() {
@@ -88,6 +89,9 @@ class _EditorScreenState extends State<EditorScreen> {
       TargetPlatform.macOS,
     ].contains(Theme.of(context).platform);
 
+    final width = MediaQuery.of(context).size.width;
+    final isWide = width > 600;
+
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: _toolProvider),
@@ -115,14 +119,15 @@ class _EditorScreenState extends State<EditorScreen> {
               body: SafeArea(
                 child: Column(
                   children: [
-                    const EditorMenuBar(),
+                    EditorMenuBar(compact: !isDesktop && !isWide),
                     Expanded(
-                      child: isDesktop
-                          ? _DesktopLayout(project: project)
-                          : _MobileLayout(project: project),
+                      child: _EditorLayout(
+                        project: project,
+                        showRightPanel: isDesktop || isWide || _showRightPanel,
+                        onToggleRightPanel: () =>
+                            setState(() => _showRightPanel = !_showRightPanel),
+                      ),
                     ),
-                    if (!isDesktop)
-                      _mobileBottomBar(_canvasProvider),
                   ],
                 ),
               ),
@@ -134,174 +139,130 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 }
 
-Widget _mobileBottomBar(CanvasProvider canvasProvider) {
-  return Builder(builder: (context) {
-    return Container(
-      height: 48,
-      color: Theme.of(context).colorScheme.surfaceContainerLow,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          IconButton(icon: const Icon(Icons.undo), onPressed: () {
-            context.read<ProjectProvider>().undo();
-          }, tooltip: 'menu.edit.undo'.tr()),
-          IconButton(icon: const Icon(Icons.redo), onPressed: () {
-            context.read<ProjectProvider>().redo();
-          }, tooltip: 'menu.edit.redo'.tr()),
-          IconButton(icon: const Icon(Icons.zoom_in), onPressed: canvasProvider.zoomIn, tooltip: 'menu.view.zoom_in'.tr()),
-          IconButton(icon: const Icon(Icons.zoom_out), onPressed: canvasProvider.zoomOut, tooltip: 'menu.view.zoom_out'.tr()),
-          IconButton(icon: const Icon(Icons.brush), onPressed: () {
-            context.read<ToolProvider>().setTool(ToolType.brush);
-          }, tooltip: 'menu.tool.brush'.tr()),
-        ],
-      ),
-    );
-  });
-}
-
-class _DesktopLayout extends StatelessWidget {
+class _EditorLayout extends StatelessWidget {
   final dynamic project;
+  final bool showRightPanel;
+  final VoidCallback onToggleRightPanel;
 
-  const _DesktopLayout({required this.project});
+  const _EditorLayout({
+    required this.project,
+    required this.showRightPanel,
+    required this.onToggleRightPanel,
+  });
 
   @override
   Widget build(BuildContext context) {
     final toolProvider = context.watch<ToolProvider>();
+    final theme = Theme.of(context);
+
     return Row(
       children: [
+        // Left: back button + tool panel
         Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () {
-                final pp = context.read<ProjectProvider>();
-                if (pp.hasUnsavedChanges) {
-                  showDialog(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: Text('unsaved.title'.tr()),
-                      content: Text('unsaved.body'.tr()),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(ctx).pop(),
-                          child: Text('unsaved.cancel'.tr()),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            pp.closeProject();
-                            Navigator.of(ctx).pop();
-                            Navigator.of(context).pop();
-                          },
-                          child: Text('unsaved.discard'.tr()),
-                        ),
-                        FilledButton(
-                          onPressed: () async {
-                            final nav = Navigator.of(context);
-                            await pp.saveProject();
-                            if (ctx.mounted) Navigator.of(ctx).pop();
-                            nav.pop();
-                          },
-                          child: Text('unsaved.save'.tr()),
-                        ),
-                      ],
-                    ),
-                  );
-                } else {
-                  Navigator.of(context).pop();
-                }
-              },
-              tooltip: '返回工作区',
+              icon: const Icon(Icons.arrow_back, size: 20),
+              onPressed: () => _goBack(context),
+              tooltip: 'app.exit'.tr(),
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              padding: const EdgeInsets.all(6),
             ),
             Expanded(child: ToolPanel(toolProvider: toolProvider)),
           ],
         ),
+        // Center: canvas
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(4),
             child: PaintCanvas(project: project),
           ),
         ),
-        SizedBox(
-          width: 180,
-          child: Column(
+        // Toggle button for right panel (mobile)
+        if (!showRightPanel)
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              ColorPanel(toolProvider: toolProvider),
-              const BrushPanel(),
-              const Expanded(child: LayerPanel()),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _MobileLayout extends StatelessWidget {
-  final dynamic project;
-
-  const _MobileLayout({required this.project});
-
-  @override
-  Widget build(BuildContext context) {
-    final toolProvider = context.watch<ToolProvider>();
-    return Stack(
-      children: [
-        PaintCanvas(project: project),
-        Positioned(left: 4, top: 8, child: ToolPanel(toolProvider: toolProvider)),
-        Positioned(right: 4, top: 8, child: ColorPanel(toolProvider: toolProvider)),
-        Positioned(
-          right: 4, bottom: 8,
-          child: SizedBox(width: 160, height: 150, child: LayerPanel()),
-        ),
-        Positioned(
-          left: 4, bottom: 8,
-          child: _backButton(context),
-        ),
-      ],
-    );
-  }
-}
-
-Widget _backButton(BuildContext context) {
-  return FloatingActionButton.small(
-    heroTag: 'back',
-    onPressed: () {
-      final pp = context.read<ProjectProvider>();
-      if (pp.hasUnsavedChanges) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: Text('unsaved.title'.tr()),
-            content: Text('unsaved.body'.tr()),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: Text('unsaved.cancel'.tr()),
-              ),
-              TextButton(
-                onPressed: () {
-                  pp.closeProject();
-                  Navigator.of(ctx).pop();
-                  Navigator.of(context).pop();
-                },
-                child: Text('unsaved.discard'.tr()),
-              ),
-              FilledButton(
-                onPressed: () async {
-                  final nav = Navigator.of(context);
-                  await pp.saveProject();
-                  if (ctx.mounted) Navigator.of(ctx).pop();
-                  nav.pop();
-                },
-                child: Text('unsaved.save'.tr()),
+              IconButton(
+                icon: const Icon(Icons.chevron_left, size: 20),
+                onPressed: onToggleRightPanel,
+                tooltip: 'app.show_panels'.tr(),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                padding: const EdgeInsets.all(4),
               ),
             ],
           ),
-        );
-      } else {
-        Navigator.of(context).pop();
-      }
-    },
-    child: const Icon(Icons.arrow_back),
-  );
+        // Right: color, brush, layer panels
+        if (showRightPanel)
+          Material(
+            elevation: 4,
+            color: theme.colorScheme.surface,
+            child: SizedBox(
+              width: 180,
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right, size: 20),
+                        onPressed: onToggleRightPanel,
+                        tooltip: 'app.hide_panels'.tr(),
+                        visualDensity: VisualDensity.compact,
+                        constraints:
+                            const BoxConstraints(minWidth: 28, minHeight: 28),
+                        padding: const EdgeInsets.all(4),
+                      ),
+                    ],
+                  ),
+                  ColorPanel(toolProvider: toolProvider),
+                  const BrushPanel(),
+                  const Expanded(child: LayerPanel()),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _goBack(BuildContext context) {
+    final pp = context.read<ProjectProvider>();
+    if (pp.hasUnsavedChanges) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('unsaved.title'.tr()),
+          content: Text('unsaved.body'.tr()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('unsaved.cancel'.tr()),
+            ),
+            TextButton(
+              onPressed: () {
+                pp.closeProject();
+                Navigator.of(ctx).pop();
+                Navigator.of(context).pop();
+              },
+              child: Text('unsaved.discard'.tr()),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final nav = Navigator.of(context);
+                await pp.saveProject();
+                if (ctx.mounted) Navigator.of(ctx).pop();
+                nav.pop();
+              },
+              child: Text('unsaved.save'.tr()),
+            ),
+          ],
+        ),
+      );
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
 }

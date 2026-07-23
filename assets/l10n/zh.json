@@ -1,5 +1,8 @@
 {
   "app.name": "绘彩",
+  "app.exit": "退出",
+  "app.show_panels": "显示面板",
+  "app.hide_panels": "隐藏面板",
   "workspace.title": "工作区",
   "workspace.new": "新建",
   "workspace.open": "打开",

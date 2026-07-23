@@ -9,31 +9,28 @@ import '../screens/settings_screen.dart';
 import '../screens/workspace_screen.dart';
 
 class EditorMenuBar extends StatelessWidget {
-  const EditorMenuBar({super.key});
+  final bool compact;
+
+  const EditorMenuBar({super.key, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = [
-      TargetPlatform.windows,
-      TargetPlatform.linux,
-      TargetPlatform.macOS,
-    ].contains(Theme.of(context).platform);
-
-    if (!isDesktop) {
-      return const _MobileMenuBar();
-    }
-    return const _DesktopMenuBar();
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: compact
+          ? _CompactMenuBar()
+          : const _FullMenuBar(),
+    );
   }
 }
 
-class _DesktopMenuBar extends StatelessWidget {
-  const _DesktopMenuBar();
+class _FullMenuBar extends StatelessWidget {
+  const _FullMenuBar();
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      color: theme.colorScheme.surfaceContainerLow,
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       child: Row(
         children: [
           _MenuButton(label: 'menu.file'.tr(), children: [
@@ -89,7 +86,8 @@ class _DesktopMenuBar extends StatelessWidget {
               final canvas = context.read<CanvasProvider>();
               final project = context.read<ProjectProvider>().currentProject;
               if (project != null) {
-                canvas.fitToScreen(MediaQuery.of(context).size.width,
+                canvas.fitToScreen(
+                    MediaQuery.of(context).size.width,
                     MediaQuery.of(context).size.height,
                     project.settings.width.toDouble(),
                     project.settings.height.toDouble());
@@ -100,16 +98,20 @@ class _DesktopMenuBar extends StatelessWidget {
           ]),
           _MenuButton(label: 'menu.image'.tr(), children: [
             _MenuItem('menu.image.flip_h'.tr(), Icons.flip, () {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Not yet implemented')));
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('Not yet implemented')));
             }),
             _MenuItem('menu.image.flip_v'.tr(), Icons.flip, () {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Not yet implemented')));
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('Not yet implemented')));
             }),
             _MenuItem('menu.image.rotate_cw'.tr(), Icons.rotate_right, () {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Not yet implemented')));
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('Not yet implemented')));
             }),
             _MenuItem('menu.image.rotate_ccw'.tr(), Icons.rotate_left, () {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Not yet implemented')));
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('Not yet implemented')));
             }),
           ]),
           _MenuButton(label: 'menu.layer'.tr(), children: [
@@ -125,7 +127,8 @@ class _DesktopMenuBar extends StatelessWidget {
             }),
             _MenuItem('menu.layer.merge'.tr(), Icons.merge, () {
               final pp = context.read<ProjectProvider>();
-              if (pp.currentProject != null && pp.currentProject!.currentLayerIndex > 0) {
+              if (pp.currentProject != null &&
+                  pp.currentProject!.currentLayerIndex > 0) {
                 pp.saveSnapshot();
                 pp.mergeDownLayer(pp.currentProject!.currentLayerIndex);
               }
@@ -206,43 +209,52 @@ class _DesktopMenuBar extends StatelessWidget {
   }
 }
 
-class _MobileMenuBar extends StatelessWidget {
-  const _MobileMenuBar();
-
+class _CompactMenuBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final toolProvider = context.watch<ToolProvider>();
     final canvasProvider = context.watch<CanvasProvider>();
-    return Container(
-      color: Theme.of(context).colorScheme.surfaceContainerLow,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          _MobileBtn(Icons.add, 'menu.file.new'.tr(), () {
+          _CompactBtn(Icons.add, 'menu.file.new'.tr(), () {
             Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const WorkspaceScreen()),
               (_) => false,
             );
           }),
-          _MobileBtn(Icons.folder_open, 'menu.file.open'.tr(), () {}),
-          _MobileBtn(Icons.save, 'menu.file.save'.tr(), () {
+          _CompactBtn(Icons.save, 'menu.file.save'.tr(), () {
             context.read<ProjectProvider>().saveProject();
           }),
-          _MobileBtn(Icons.undo, 'menu.edit.undo'.tr(), () {
+          _CompactBtn(Icons.undo, 'menu.edit.undo'.tr(), () {
             context.read<ProjectProvider>().undo();
           }),
-          _MobileBtn(Icons.redo, 'menu.edit.redo'.tr(), () {
+          _CompactBtn(Icons.redo, 'menu.edit.redo'.tr(), () {
             context.read<ProjectProvider>().redo();
           }),
-          const Spacer(),
+          _CompactBtn(Icons.zoom_in, 'menu.view.zoom_in'.tr(),
+              canvasProvider.zoomIn),
+          _CompactBtn(Icons.zoom_out, 'menu.view.zoom_out'.tr(),
+              canvasProvider.zoomOut),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
+            icon: const Icon(Icons.more_vert, size: 20),
             onSelected: (value) {
               switch (value) {
-                case 'zoom_in':
-                  canvasProvider.zoomIn();
-                case 'zoom_out':
-                  canvasProvider.zoomOut();
+                case 'tool_move':
+                  toolProvider.setTool(ToolType.move);
+                case 'tool_brush':
+                  toolProvider.setTool(ToolType.brush);
+                case 'tool_rect':
+                  toolProvider.setTool(ToolType.shape);
+                case 'tool_eraser':
+                  toolProvider.setTool(ToolType.eraser);
+                case 'tool_fill':
+                  toolProvider.setTool(ToolType.fill);
+                case 'tool_eyedropper':
+                  toolProvider.setTool(ToolType.eyedropper);
+                case 'layer_new':
+                  context.read<ProjectProvider>().addLayer();
                 case 'fit':
                   final project =
                       context.read<ProjectProvider>().currentProject;
@@ -253,24 +265,11 @@ class _MobileMenuBar extends StatelessWidget {
                         project.settings.width.toDouble(),
                         project.settings.height.toDouble());
                   }
-                case 'actual':
-                  canvasProvider.resetView();
-                case 'tool_move':
-                  toolProvider.setTool(ToolType.move);
-                case 'tool_brush':
-                  toolProvider.setTool(ToolType.brush);
-                case 'tool_rect':
-                  toolProvider.setTool(ToolType.shape);
-                case 'tool_pen':
-                  toolProvider.setTool(ToolType.pen);
-                case 'tool_text':
-                  toolProvider.setTool(ToolType.text);
-                case 'tool_eraser':
-                  toolProvider.setTool(ToolType.eraser);
-                case 'tool_fill':
-                  toolProvider.setTool(ToolType.fill);
-                case 'layer_new':
-                  context.read<ProjectProvider>().addLayer();
+                case 'open_settings':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const SettingsScreen()),
+                  );
                 case 'about':
                   showAboutDialog(
                     context: context,
@@ -281,87 +280,56 @@ class _MobileMenuBar extends StatelessWidget {
               }
             },
             itemBuilder: (context) => [
-              PopupMenuItem(
-                  value: 'tool_move',
-                  child: ListTile(
-                      leading: const Icon(Icons.open_with),
-                      title: Text('menu.tool.move'.tr()))),
-              PopupMenuItem(
-                  value: 'tool_brush',
-                  child: ListTile(
-                      leading: const Icon(Icons.brush),
-                      title: Text('menu.tool.brush'.tr()))),
-              PopupMenuItem(
-                  value: 'tool_rect',
-                  child: ListTile(
-                      leading: const Icon(Icons.rectangle_outlined),
-                      title: Text('menu.tool.rect'.tr()))),
-              PopupMenuItem(
-                  value: 'tool_pen',
-                  child: ListTile(
-                      leading: const Icon(Icons.edit),
-                      title: Text('menu.tool.pen'.tr()))),
-              PopupMenuItem(
-                  value: 'tool_text',
-                  child: ListTile(
-                      leading: const Icon(Icons.text_fields),
-                      title: Text('menu.tool.text'.tr()))),
-              PopupMenuItem(
-                  value: 'tool_eraser',
-                  child: ListTile(
-                      leading: const Icon(Icons.auto_fix_normal),
-                      title: Text('menu.tool.eraser'.tr()))),
-              PopupMenuItem(
-                  value: 'tool_fill',
-                  child: ListTile(
-                      leading: const Icon(Icons.format_color_fill),
-                      title: Text('menu.tool.fill'.tr()))),
+              _popupItem('tool_move', Icons.open_with, 'menu.tool.move'),
+              _popupItem('tool_brush', Icons.brush, 'menu.tool.brush'),
+              _popupItem('tool_rect', Icons.rectangle_outlined, 'menu.tool.rect'),
+              _popupItem('tool_eraser', Icons.auto_fix_normal, 'menu.tool.eraser'),
+              _popupItem('tool_fill', Icons.format_color_fill, 'menu.tool.fill'),
+              _popupItem('tool_eyedropper', Icons.colorize, 'menu.tool.eyedropper'),
               const PopupMenuDivider(),
-              PopupMenuItem(
-                  value: 'zoom_in',
-                  child: ListTile(
-                      leading: const Icon(Icons.zoom_in),
-                      title: Text('menu.view.zoom_in'.tr()))),
-              PopupMenuItem(
-                  value: 'zoom_out',
-                  child: ListTile(
-                      leading: const Icon(Icons.zoom_out),
-                      title: Text('menu.view.zoom_out'.tr()))),
-              PopupMenuItem(
-                  value: 'fit',
-                  child: ListTile(
-                      leading: const Icon(Icons.fit_screen),
-                      title: Text('menu.view.fit_screen'.tr()))),
-              PopupMenuItem(
-                  value: 'actual',
-                  child: ListTile(
-                      leading: const Icon(Icons.image_aspect_ratio),
-                      title: Text('menu.view.actual_size'.tr()))),
+              _popupItem('fit', Icons.fit_screen, 'menu.view.fit_screen'),
               const PopupMenuDivider(),
-              PopupMenuItem(
-                  value: 'about',
-                  child: ListTile(
-                      leading: const Icon(Icons.info_outline),
-                      title: Text('menu.help.about'.tr()))),
+              _popupItem('layer_new', Icons.layers, 'menu.layer.new'),
+              const PopupMenuDivider(),
+              _popupItem('open_settings', Icons.settings, 'menu.settings.open'),
+              _popupItem('about', Icons.info_outline, 'menu.help.about'),
             ],
           ),
         ],
       ),
     );
   }
+
+  PopupMenuItem<String> _popupItem(
+          String value, IconData icon, String labelKey) =>
+      PopupMenuItem(
+        value: value,
+        child: ListTile(
+          leading: Icon(icon, size: 20),
+          title: Text(labelKey.tr(), style: const TextStyle(fontSize: 13)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      );
 }
 
-class _MobileBtn extends StatelessWidget {
+class _CompactBtn extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback onPressed;
 
-  const _MobileBtn(this.icon, this.tooltip, this.onPressed);
+  const _CompactBtn(this.icon, this.tooltip, this.onPressed);
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
-        icon: Icon(icon), onPressed: onPressed, tooltip: tooltip);
+      icon: Icon(icon, size: 20),
+      onPressed: onPressed,
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      padding: const EdgeInsets.all(6),
+    );
   }
 }
 
@@ -422,7 +390,7 @@ class _MenuButtonState extends State<_MenuButton> {
       child: GestureDetector(
         onTap: _showMenu,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           color: _hovered
               ? Theme.of(context).colorScheme.surfaceContainerHigh
               : Colors.transparent,
