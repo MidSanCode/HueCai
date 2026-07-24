@@ -22,21 +22,177 @@ class ProjectService {
 
   Future<List<Project>> listProjects() async {
     final dir = await _projectsDir;
-    final projectDir = Directory(dir);
-    if (!await projectDir.exists()) return [];
+    return _listProjectsRecursive(Directory(dir));
+  }
 
-    final files = await projectDir.list().toList();
+  Future<List<Project>> _listProjectsRecursive(Directory dir) async {
+    if (!await dir.exists()) return [];
     final projects = <Project>[];
-    for (final file in files) {
-      if (file is File && file.path.endsWith(_hcpExtension)) {
+    final entries = await dir.list().toList();
+    for (final entry in entries) {
+      if (entry is Directory) {
+        if (entry.path.endsWith('.trash')) continue;
+        projects.addAll(await _listProjectsRecursive(entry));
+      } else if (entry is File && entry.path.endsWith(_hcpExtension)) {
         try {
-          final project = await loadProject(file.path);
+          final project = await loadProject(entry.path);
           if (project != null) projects.add(project);
         } catch (_) {}
       }
     }
     projects.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
     return projects;
+  }
+
+  Future<List<File>> listTrashFiles() async {
+    final dir = await _projectsDir;
+    final trashDir = Directory('$dir/.trash');
+    if (!await trashDir.exists()) return [];
+    return (await trashDir.list().toList())
+        .whereType<File>()
+        .where((f) => f.path.endsWith(_hcpExtension))
+        .toList();
+  }
+
+  Future<bool> trashProject(String filePath) async {
+    try {
+      final dir = await _projectsDir;
+      final trashDir = Directory('$dir/.trash');
+      if (!await trashDir.exists()) await trashDir.create(recursive: true);
+      final file = File(filePath);
+      if (!await file.exists()) return false;
+      final name = file.uri.pathSegments.last;
+      await file.rename('${trashDir.path}/$name');
+      // Also move thumbnail
+      final thumb = File('$filePath.thumb.png');
+      if (await thumb.exists()) {
+        await thumb.rename('${trashDir.path}/$name.thumb.png');
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> restoreProject(String trashPath) async {
+    try {
+      final dir = await _projectsDir;
+      final file = File(trashPath);
+      if (!await file.exists()) return false;
+      final name = file.uri.pathSegments.last;
+      await file.rename('$dir/$name');
+      final thumb = File('$trashPath.thumb.png');
+      if (await thumb.exists()) {
+        await thumb.rename('$dir/$name.thumb.png');
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> emptyTrash() async {
+    try {
+      final dir = await _projectsDir;
+      final trashDir = Directory('$dir/.trash');
+      if (await trashDir.exists()) {
+        await trashDir.delete(recursive: true);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> renameProject(String filePath, String newName) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return false;
+      final dir = file.parent;
+      final newPath = '${dir.path}/$newName$_hcpExtension';
+      await file.rename(newPath);
+      // Also rename thumbnail
+      final thumb = File('$filePath.thumb.png');
+      if (await thumb.exists()) {
+        await thumb.rename('$newPath.thumb.png');
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> createFolder(String folderName) async {
+    try {
+      final dir = await _projectsDir;
+      final newDir = Directory('$dir/$folderName');
+      if (await newDir.exists()) return false;
+      await newDir.create();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<List<String>> listFolders() async {
+    final dir = await _projectsDir;
+    final projectDir = Directory(dir);
+    if (!await projectDir.exists()) return [];
+    final folders = <String>[];
+    final entries = await projectDir.list().toList();
+    for (final entry in entries) {
+      if (entry is Directory && !entry.path.endsWith('.trash')) {
+        folders.add(entry.uri.pathSegments.last);
+      }
+    }
+    return folders;
+  }
+
+  Future<List<String>> getProjectFolder(String filePath) async {
+    final dir = await _projectsDir;
+    final file = File(filePath);
+    final parent = file.parent.path;
+    if (parent == dir) return [];
+    return [file.parent.uri.pathSegments.last];
+  }
+
+  Future<bool> moveToFolder(List<String> filePaths, String folderName) async {
+    try {
+      final dir = await _projectsDir;
+      final dest = Directory('$dir/$folderName');
+      if (!await dest.exists()) await dest.create();
+      for (final path in filePaths) {
+        final file = File(path);
+        if (await file.exists()) {
+          final name = file.uri.pathSegments.last;
+          await file.rename('${dest.path}/$name');
+          final thumb = File('$path.thumb.png');
+          if (await thumb.exists()) {
+            await thumb.rename('${dest.path}/$name.thumb.png');
+          }
+        }
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> batchExport(List<String> filePaths, String destDir) async {
+    try {
+      final dest = Directory(destDir);
+      if (!await dest.exists()) await dest.create(recursive: true);
+      for (final path in filePaths) {
+        final file = File(path);
+        if (await file.exists()) {
+          final name = file.uri.pathSegments.last;
+          await file.copy('${dest.path}/$name');
+        }
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<Project?> loadProject(String filePath) async {
@@ -130,7 +286,50 @@ class ProjectService {
     await file.writeAsBytes(encoded);
     project.filePath = savePath;
     project.modifiedAt = DateTime.now();
+
+    // Generate thumbnail
+    try {
+      final thumbBytes = await _generateThumbnail(project);
+      if (thumbBytes != null) {
+        await File('$savePath.thumb.png').writeAsBytes(thumbBytes);
+      }
+    } catch (_) {}
+
     return savePath;
+  }
+
+  Future<Uint8List?> _generateThumbnail(Project project) async {
+    try {
+      final w = project.settings.width;
+      final h = project.settings.height;
+      const maxThumb = 256;
+      final scale = maxThumb / (w > h ? w : h);
+      final thumbW = (w * scale).round().clamp(1, maxThumb);
+      final thumbH = (h * scale).round().clamp(1, maxThumb);
+
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, thumbW.toDouble(), thumbH.toDouble()));
+      canvas.save();
+      canvas.scale(scale, scale);
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+        Paint()..color = Colors.white,
+      );
+      for (final layer in project.layers) {
+        if (!layer.visible) continue;
+        for (final d in layer.drawables) {
+          d.draw(canvas, Paint());
+        }
+      }
+      canvas.restore();
+      final picture = recorder.endRecording();
+      final thumbImg = await picture.toImage(thumbW, thumbH);
+      final pngBytes = await thumbImg.toByteData(format: ui.ImageByteFormat.png);
+      thumbImg.dispose();
+      return pngBytes?.buffer.asUint8List();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<Uint8List?> _layerToPng(Layer layer, int canvasW, int canvasH) async {
@@ -191,16 +390,8 @@ class ProjectService {
   }
 
   Future<bool> deleteProject(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (await file.exists()) {
-        await file.delete();
-        return true;
-      }
-      return false;
-    } catch (_) {
-      return false;
-    }
+    // Move to trash instead of permanent delete
+    return trashProject(filePath);
   }
 
   Future<String?> selectHcpFile() async {

@@ -1,9 +1,15 @@
+import 'dart:io';
+import 'dart:math';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../providers/project_provider.dart';
 import '../models/project.dart';
 import '../models/canvas_settings.dart';
+import '../models/drawable.dart';
+import '../services/project_service.dart';
 import 'new_project_dialog.dart';
 import 'editor_screen.dart';
 
@@ -15,12 +21,38 @@ class WorkspaceScreen extends StatefulWidget {
 }
 
 class _WorkspaceScreenState extends State<WorkspaceScreen> {
+  bool _selectionMode = false;
+  final Set<String> _selectedPaths = {};
+  bool _showTrash = false;
+  List<File> _trashFiles = [];
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ProjectProvider>().loadRecentProjects();
     });
+  }
+
+  void _openProject(BuildContext context) async {
+    final pp = context.read<ProjectProvider>();
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['hcp', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
+    );
+    if (result != null && result.files.single.path != null) {
+      final path = result.files.single.path!;
+      if (path.endsWith('.hcp')) {
+        await pp.openProject(path);
+      } else {
+        await pp.importImage(path);
+      }
+      if (context.mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const EditorScreen()),
+        );
+      }
+    }
   }
 
   Future<void> _showNewProjectDialog() async {
@@ -47,80 +79,297 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     }
   }
 
+  void _toggleSelection(String path) {
+    setState(() {
+      if (_selectedPaths.contains(path)) {
+        _selectedPaths.remove(path);
+        if (_selectedPaths.isEmpty) _selectionMode = false;
+      } else {
+        _selectedPaths.add(path);
+      }
+    });
+  }
+
+  void _exitSelection() {
+    setState(() {
+      _selectionMode = false;
+      _selectedPaths.clear();
+    });
+  }
+
+  Future<void> _showRenameDialog(BuildContext ctx, Project project) async {
+    final pp = context.read<ProjectProvider>();
+    final controller = TextEditingController(text: project.name);
+    final result = await showDialog<String>(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        title: Text('workspace.rename'.tr()),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(isDense: true),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dCtx).pop(), child: Text('dialog.cancel'.tr())),
+          TextButton(onPressed: () => Navigator.of(dCtx).pop(controller.text), child: Text('dialog.confirm'.tr())),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty && project.filePath != null) {
+      await pp.renameProject(project.filePath!, result);
+      if (context.mounted) pp.loadRecentProjects();
+    }
+  }
+
+  Future<void> _showCreateFolderDialog() async {
+    final pp = context.read<ProjectProvider>();
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: Text('workspace.new_folder'.tr()),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(isDense: true, hintText: 'folder_name'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dCtx).pop(), child: Text('dialog.cancel'.tr())),
+          TextButton(onPressed: () => Navigator.of(dCtx).pop(controller.text), child: Text('dialog.confirm'.tr())),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty) {
+      await pp.createFolder(result);
+      if (context.mounted) pp.loadRecentProjects();
+    }
+  }
+
+  Future<void> _showMoveDialog(BuildContext ctx) async {
+    final pp = context.read<ProjectProvider>();
+    final folders = await pp.listFolders();
+    if (!ctx.mounted) return;
+    final folder = await showDialog<String>(
+      context: ctx,
+      builder: (dCtx) => SimpleDialog(
+        title: Text('workspace.move_to'.tr()),
+        children: [
+          ...folders.map((f) => SimpleDialogOption(
+            onPressed: () => Navigator.of(dCtx).pop(f),
+            child: Text(f),
+          )),
+        ],
+      ),
+    );
+    if (folder != null) {
+      await pp.moveToFolder(_selectedPaths.toList(), folder);
+      _exitSelection();
+      if (context.mounted) pp.loadRecentProjects();
+    }
+  }
+
+  Future<void> _showBatchExportDialog() async {
+    final pp = context.read<ProjectProvider>();
+    final result = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'workspace.batch_export'.tr(),
+    );
+    if (result != null) {
+      await pp.batchExport(_selectedPaths.toList(), result);
+      _exitSelection();
+    }
+  }
+
+  Future<void> _loadTrash() async {
+    final files = await context.read<ProjectProvider>().listTrashFiles();
+    if (mounted) setState(() => _trashFiles = files);
+  }
+
+  Future<void> _showCardContextMenu(BuildContext ctx, Project project) async {
+    final result = await showMenu<String>(
+      context: ctx,
+      position: RelativeRect.fromLTRB(100, 100, 100, 100),
+      items: [
+        const PopupMenuItem(value: 'rename', child: ListTile(leading: Icon(Icons.edit, size: 18), title: Text('Rename'), dense: true)),
+        const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete, size: 18), title: Text('Delete'), dense: true)),
+      ],
+    );
+    final pp = context.read<ProjectProvider>();
+    if (result == 'rename') {
+      _showRenameDialog(ctx, project);
+    } else if (result == 'delete') {
+      await pp.deleteProject(project.filePath!);
+      if (context.mounted) pp.loadRecentProjects();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final pp = context.watch<ProjectProvider>();
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('app.name'.tr()),
-        centerTitle: true,
-      ),
-      body: Consumer<ProjectProvider>(
-        builder: (ctx, provider, _) {
-          if (provider.loading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          return Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _ActionCards(
-                  onNew: _showNewProjectDialog,
-                  onOpen: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('file_picker not available')),
-                    );
+        leading: _selectionMode
+            ? IconButton(icon: const Icon(Icons.close), onPressed: _exitSelection)
+            : null,
+        title: _selectionMode
+            ? Text('${_selectedPaths.length} selected')
+            : Text('app.name'.tr()),
+        centerTitle: !_selectionMode,
+        actions: _selectionMode
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.delete, size: 20),
+                  tooltip: 'Delete',
+                  onPressed: () async {
+                    for (final p in _selectedPaths) {
+                      await pp.deleteProject(p);
+                    }
+                    _exitSelection();
+                    if (context.mounted) pp.loadRecentProjects();
                   },
                 ),
-                const SizedBox(height: 24),
-                Text(
-                  'workspace.recent'.tr(),
-                  style: theme.textTheme.titleMedium,
+                IconButton(
+                  icon: const Icon(Icons.drive_file_move, size: 20),
+                  tooltip: 'workspace.move_to'.tr(),
+                  onPressed: () => _showMoveDialog(context),
                 ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: provider.recentProjects.isEmpty
-                      ? _EmptyState()
-                      : GridView.builder(
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: _crossAxisCount(context),
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 1.2,
-                          ),
-                          itemCount: provider.recentProjects.length,
-                          itemBuilder: (ctx, i) {
-                            final project = provider.recentProjects[i];
-                            return _ProjectCard(
-                              project: project,
-                              onTap: () async {
-                                if (project.filePath != null) {
-                                  await provider.openProject(project.filePath!);
-                                  if (context.mounted) {
-                                    Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                          builder: (_) => const EditorScreen()),
-                                    );
-                                  }
-                                }
-                              },
-                              onDelete: () async {
-                                if (project.filePath != null) {
-                                  await provider.deleteProject(project.filePath!);
-                                }
-                              },
-                            );
-                          },
-                        ),
+                IconButton(
+                  icon: const Icon(Icons.file_download, size: 20),
+                  tooltip: 'workspace.batch_export'.tr(),
+                  onPressed: _showBatchExportDialog,
+                ),
+              ]
+            : [
+                IconButton(
+                  icon: Icon(_showTrash ? Icons.folder : Icons.delete_outline, size: 20),
+                  tooltip: 'workspace.trash'.tr(),
+                  onPressed: () {
+                    setState(() => _showTrash = !_showTrash);
+                    if (_showTrash) _loadTrash();
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.create_new_folder, size: 20),
+                  tooltip: 'workspace.new_folder'.tr(),
+                  onPressed: _showCreateFolderDialog,
                 ),
               ],
-            ),
-          );
-        },
+      ),
+      body: _showTrash ? _buildTrashView(context, theme) : _buildProjectGrid(context, theme, pp),
+    );
+  }
+
+  Widget _buildTrashView(BuildContext context, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('workspace.trash'.tr(), style: theme.textTheme.titleMedium),
+              const Spacer(),
+              TextButton.icon(
+                icon: const Icon(Icons.delete_sweep, size: 18),
+                label: Text('workspace.empty_trash'.tr()),
+                onPressed: () async {
+                  await context.read<ProjectProvider>().emptyTrash();
+                  setState(() => _trashFiles.clear());
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: _trashFiles.isEmpty
+                ? Center(child: Text('workspace.trash_empty'.tr(), style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant)))
+                : ListView.builder(
+                    itemCount: _trashFiles.length,
+                    itemBuilder: (ctx, i) {
+                      final file = _trashFiles[i];
+                      final name = file.uri.pathSegments.last;
+                      return ListTile(
+                        title: Text(name),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.restore, size: 20),
+                          tooltip: 'workspace.restore'.tr(),
+                          onPressed: () async {
+                            await context.read<ProjectProvider>().restoreProject(file.path);
+                            _loadTrash();
+                          },
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildProjectGrid(BuildContext context, ThemeData theme, ProjectProvider provider) {
+    if (provider.loading) return const Center(child: CircularProgressIndicator());
+    if (provider.recentProjects.isEmpty) return _EmptyState(onNew: _showNewProjectDialog);
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('workspace.recent'.tr(), style: theme.textTheme.titleMedium),
+          const SizedBox(height: 12),
+          Expanded(
+            child: GridView.builder(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: _crossAxisCount(context),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.2,
+              ),
+              itemCount: provider.recentProjects.length + 2,
+              itemBuilder: (ctx, i) {
+                if (i == 0) {
+                  return _NewCard(onTap: _showNewProjectDialog);
+                }
+                if (i == 1) {
+                  return _OpenCard(onTap: () => _openProject(context));
+                }
+                final project = provider.recentProjects[i - 2];
+                return _ProjectCard(
+                  project: project,
+                  selected: _selectionMode && project.filePath != null && _selectedPaths.contains(project.filePath),
+                  showCheckbox: _selectionMode,
+                  onTap: () {
+                    if (_selectionMode && project.filePath != null) {
+                      _toggleSelection(project.filePath!);
+                    } else if (project.filePath != null) {
+                      _openAndNavigate(context, provider, project.filePath!);
+                    }
+                  },
+                  onLongPress: () {
+                    if (project.filePath != null) {
+                      setState(() {
+                        _selectionMode = true;
+                        _selectedPaths.add(project.filePath!);
+                      });
+                    }
+                  },
+                  onContextMenu: () => _showCardContextMenu(context, project),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openAndNavigate(BuildContext context, ProjectProvider provider, String filePath) async {
+    await provider.openProject(filePath);
+    if (context.mounted) {
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EditorScreen()));
+    }
   }
 
   int _crossAxisCount(BuildContext context) {
@@ -132,101 +381,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 }
 
-class _ActionCards extends StatelessWidget {
-  final VoidCallback onNew;
-  final VoidCallback onOpen;
-
-  const _ActionCards({required this.onNew, required this.onOpen});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      children: [
-        Expanded(
-          child: Card(
-            elevation: 0,
-            color: theme.colorScheme.primaryContainer,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: onNew,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Column(
-                  children: [
-                    Icon(Icons.add_circle_outline,
-                        size: 40, color: theme.colorScheme.onPrimaryContainer),
-                    const SizedBox(height: 8),
-                    Text('workspace.new'.tr(),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: theme.colorScheme.onPrimaryContainer,
-                        )),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Card(
-            elevation: 0,
-            color: theme.colorScheme.secondaryContainer,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: onOpen,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Column(
-                  children: [
-                    Icon(Icons.folder_open,
-                        size: 40, color: theme.colorScheme.onSecondaryContainer),
-                    const SizedBox(height: 8),
-                    Text('workspace.open'.tr(),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: theme.colorScheme.onSecondaryContainer,
-                        )),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.palette_outlined,
-              size: 64, color: theme.colorScheme.outlineVariant),
-          const SizedBox(height: 16),
-          Text('workspace.no_projects'.tr(),
-              style: theme.textTheme.bodyLarge
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-        ],
-      ),
-    );
-  }
-}
-
-class _ProjectCard extends StatelessWidget {
-  final Project project;
+class _NewCard extends StatelessWidget {
   final VoidCallback onTap;
-  final VoidCallback onDelete;
-
-  const _ProjectCard({
-    required this.project,
-    required this.onTap,
-    required this.onDelete,
-  });
+  const _NewCard({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -236,44 +393,254 @@ class _ProjectCard extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: Container(
                 width: double.infinity,
-                color: theme.colorScheme.surfaceContainerHigh,
+                color: theme.colorScheme.primaryContainer,
                 child: Center(
-                  child: Icon(Icons.image_outlined,
-                      size: 48, color: theme.colorScheme.onSurfaceVariant),
+                  child: Icon(Icons.add_circle_outline, size: 48,
+                      color: theme.colorScheme.onPrimaryContainer),
                 ),
               ),
             ),
             Padding(
               padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    project.name,
-                    style: theme.textTheme.titleSmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${project.settings.width}x${project.settings.height}',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  ),
-                  Text(
-                    _formatDate(project.modifiedAt),
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.outline),
-                  ),
-                ],
-              ),
+              child: Text('workspace.new'.tr(),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.colorScheme.onPrimaryContainer,
+                  )),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OpenCard extends StatelessWidget {
+  final VoidCallback onTap;
+  const _OpenCard({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          children: [
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                color: theme.colorScheme.secondaryContainer,
+                child: Center(
+                  child: Icon(Icons.folder_open, size: 48,
+                      color: theme.colorScheme.onSecondaryContainer),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Text('workspace.open'.tr(),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.colorScheme.onSecondaryContainer,
+                  )),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final VoidCallback onNew;
+  const _EmptyState({required this.onNew});
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.palette_outlined,
+                size: 64, color: theme.colorScheme.outlineVariant),
+            const SizedBox(height: 16),
+            Text('workspace.no_projects'.tr(),
+                style: theme.textTheme.bodyLarge
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FilledButton.icon(
+                  onPressed: onNew,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text('workspace.new'.tr()),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: () {},
+                  icon: const Icon(Icons.folder_open, size: 18),
+                  label: Text('workspace.open'.tr()),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectCard extends StatefulWidget {
+  final Project project;
+  final bool selected;
+  final bool showCheckbox;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final VoidCallback? onContextMenu;
+
+  const _ProjectCard({
+    required this.project,
+    this.selected = false,
+    this.showCheckbox = false,
+    required this.onTap,
+    this.onLongPress,
+    this.onContextMenu,
+  });
+
+  @override
+  State<_ProjectCard> createState() => _ProjectCardState();
+}
+
+class _ProjectCardState extends State<_ProjectCard> {
+  FileImage? _thumbnailImage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumbnail();
+  }
+
+  void _loadThumbnail() {
+    if (widget.project.filePath == null) return;
+    final thumbFile = File('${widget.project.filePath}.thumb.png');
+    if (thumbFile.existsSync()) {
+      _thumbnailImage = FileImage(thumbFile);
+    }
+  }
+
+  void _showReplay(BuildContext context) async {
+    final project = widget.project;
+    if (project.filePath == null) return;
+
+    final service = ProjectService();
+    final loaded = await service.loadProject(project.filePath!);
+    if (loaded == null || !context.mounted) return;
+
+    final allDrawables = <Drawable>[];
+    for (final layer in loaded.layers) {
+      if (!layer.visible) continue;
+      allDrawables.addAll(layer.drawables);
+    }
+    if (allDrawables.isEmpty) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => _ReplayDialog(drawables: allDrawables, project: loaded),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onSecondaryTap: widget.onContextMenu,
+      onLongPress: widget.onLongPress,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        color: widget.selected ? theme.colorScheme.primaryContainer : null,
+        child: InkWell(
+          onTap: widget.onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (_thumbnailImage != null)
+                      Image(image: _thumbnailImage!, fit: BoxFit.cover, width: double.infinity, height: double.infinity)
+                    else
+                      Container(
+                        color: theme.colorScheme.surfaceContainerHigh,
+                        child: Center(
+                          child: Icon(Icons.image_outlined,
+                              size: 48, color: theme.colorScheme.onSurfaceVariant),
+                        ),
+                      ),
+                    if (widget.showCheckbox)
+                      Positioned(
+                        left: 4,
+                        top: 4,
+                        child: Icon(
+                          widget.selected ? Icons.check_circle : Icons.circle_outlined,
+                          size: 22,
+                          color: widget.selected ? theme.colorScheme.primary : Colors.white70,
+                        ),
+                      ),
+                    Positioned(
+                      right: 4,
+                      bottom: 4,
+                      child: Material(
+                        color: Colors.black38,
+                        borderRadius: BorderRadius.circular(16),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => _showReplay(context),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(Icons.play_circle_filled,
+                                size: 22, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.project.name,
+                      style: theme.textTheme.titleSmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${widget.project.settings.width}x${widget.project.settings.height}',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                    Text(
+                      _formatDate(widget.project.modifiedAt),
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.outline),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -282,4 +649,116 @@ class _ProjectCard extends StatelessWidget {
   String _formatDate(DateTime dt) {
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
   }
+}
+
+class _ReplayDialog extends StatefulWidget {
+  final List<Drawable> drawables;
+  final Project project;
+
+  const _ReplayDialog({required this.drawables, required this.project});
+
+  @override
+  State<_ReplayDialog> createState() => _ReplayDialogState();
+}
+
+class _ReplayDialogState extends State<_ReplayDialog> {
+  int _visibleCount = 0;
+  late Timer _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
+      if (_visibleCount < widget.drawables.length) {
+        setState(() => _visibleCount++);
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final w = widget.project.settings.width.toDouble();
+    final h = widget.project.settings.height.toDouble();
+    final available = MediaQuery.of(context).size.width * 0.8;
+    final scale = (available / w).clamp(0.1, 1.0);
+    final dw = w * scale;
+    final dh = h * scale;
+
+    return Dialog(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.project.name, style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            ClipRect(
+              child: SizedBox(
+                width: dw,
+                height: dh,
+                  child: CustomPaint(
+                    size: Size(dw, dh),
+                    painter: _ReplayPainter(
+                      drawables: widget.drawables,
+                      visibleCount: _visibleCount,
+                      canvasW: widget.project.settings.width.toDouble(),
+                      canvasH: widget.project.settings.height.toDouble(),
+                    ),
+                  ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text('$_visibleCount / ${widget.drawables.length}'),
+            if (_visibleCount >= widget.drawables.length)
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text('dialog.close'.tr()),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReplayPainter extends CustomPainter {
+  final List<Drawable> drawables;
+  final int visibleCount;
+  final double canvasW;
+  final double canvasH;
+
+  _ReplayPainter({
+    required this.drawables,
+    required this.visibleCount,
+    required this.canvasW,
+    required this.canvasH,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scaleX = size.width / (canvasW > 0 ? canvasW : 1);
+    final scaleY = size.height / (canvasH > 0 ? canvasH : 1);
+    canvas.save();
+    canvas.scale(min(scaleX, scaleY));
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, canvasW, canvasH),
+      Paint()..color = Colors.white,
+    );
+    for (int i = 0; i < drawables.length && i < visibleCount; i++) {
+      drawables[i].draw(canvas, Paint());
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_ReplayPainter old) => old.visibleCount != visibleCount;
 }

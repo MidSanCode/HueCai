@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
@@ -8,6 +9,7 @@ import '../../models/drawable.dart';
 import '../../providers/tool_provider.dart';
 import '../../providers/canvas_provider.dart';
 import '../../providers/project_provider.dart';
+import '../../providers/app_settings.dart';
 import '../../utils/logger.dart';
 
 class PaintCanvas extends StatefulWidget {
@@ -30,10 +32,18 @@ class _PaintCanvasState extends State<PaintCanvas> {
   bool _dragConfirmed = false;
   bool _isScaling = false;
   DateTime? _scaleEndTime;
-  static const double _dragThreshold = 8.0;
-  static const Duration _scaleCooldown = Duration(milliseconds: 400);
+  static const double _dragThreshold = 12.0;
+  static const Duration _scaleCooldown = Duration(milliseconds: 600);
 
   final _log = AppLogger();
+
+  // Stabilizer smoothing
+  final List<Offset> _stabilizerQueue = [];
+
+  // Velocity tracking for dynamic brush width
+  DateTime? _lastPointerTime;
+  Offset? _lastPointerPos;
+  double _smoothedWidth = 0;
 
   bool _isOnCanvas(Offset canvasPos) {
     return canvasPos.dx >= 0 &&
@@ -69,6 +79,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final canvasPos = _toCanvas(pos, areaSize);
     _downScreenPos = pos;
     _dragConfirmed = false;
+    _lastPointerTime = null;
+    _lastPointerPos = null;
+    _smoothedWidth = 0;
 
     _log.info('PointerDown tool=${tp.currentTool} canvasPos=(${canvasPos.dx.toStringAsFixed(1)}, ${canvasPos.dy.toStringAsFixed(1)})');
 
@@ -94,9 +107,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
     if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
       if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
+      _stabilizerQueue.clear();
+      _lastPointerTime = DateTime.now();
+      _lastPointerPos = pos;
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
+        widths: [tp.brushSize],
         color: tp.currentTool == ToolType.eraser ? Colors.white : tp.primaryColor,
         strokeWidth: tp.brushSize,
         opacity: tp.brushOpacity,
@@ -169,7 +186,52 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
 
     if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
-      _currentDrawable!.points.add(canvasPos);
+      final as = context.read<AppSettings>();
+      // Velocity-based dynamic width
+      final now = DateTime.now();
+      double currentWidth = tp.brushSize;
+      if (as.velocityWidthEnabled && _lastPointerTime != null && _lastPointerPos != null) {
+        final dt = now.difference(_lastPointerTime!).inMilliseconds / 1000.0;
+        final dist = (pos - _lastPointerPos!).distance;
+        if (dt > 0) {
+          const double maxVel = 6000;
+          const double minVel = 100;
+          final velocity = (dist / dt).clamp(minVel, maxVel);
+          final ratio = (velocity - minVel) / (maxVel - minVel);
+          final range = as.velocityMaxScale - as.velocityMinScale;
+          final scale = as.velocityMaxScale - ratio * range;
+          currentWidth = tp.brushSize * scale;
+        }
+      }
+      // Exponential smoothing for natural transition
+      if (_smoothedWidth > 0) {
+        currentWidth = currentWidth * as.velocitySmoothing + _smoothedWidth * (1 - as.velocitySmoothing);
+      }
+      _smoothedWidth = currentWidth;
+      _lastPointerTime = now;
+      _lastPointerPos = pos;
+
+      final stabilizerLevel = context.read<AppSettings>().stabilizer.round();
+      Offset drawPos;
+      if (stabilizerLevel > 0) {
+        _stabilizerQueue.add(canvasPos);
+        while (_stabilizerQueue.length > stabilizerLevel) {
+          _stabilizerQueue.removeAt(0);
+        }
+        if (_stabilizerQueue.length >= 2) {
+          drawPos = Offset(
+            _stabilizerQueue.map((p) => p.dx).reduce((a, b) => a + b) / _stabilizerQueue.length,
+            _stabilizerQueue.map((p) => p.dy).reduce((a, b) => a + b) / _stabilizerQueue.length,
+          );
+        } else {
+          drawPos = canvasPos;
+        }
+      } else {
+        drawPos = canvasPos;
+      }
+      _currentDrawable!.points.add(drawPos);
+      _currentDrawable!.widths ??= [];
+      _currentDrawable!.widths!.add(currentWidth);
       pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
     } else if (tp.currentTool == ToolType.shape) {
       final snapped = _snapShapeEnd(tp, canvasPos);
@@ -179,6 +241,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
   }
 
   void _onPointerUp() {
+    _stabilizerQueue.clear();
+    _lastPointerTime = null;
+    _lastPointerPos = null;
     final pp = context.read<ProjectProvider>();
     // If drag was never confirmed, discard the pending drawable
     if (!_dragConfirmed && _currentDrawable != null) {
@@ -312,7 +377,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
                   return;
                 }
                 if (isMoveTool && !hasSelection) {
-                  cp.panBy(details.focalPointDelta);
+                  final delta = details.focalPointDelta;
+                  if (delta.distance > 2.0) {
+                    cp.panBy(delta);
+                  }
                 } else if (isDrawingTool) {
                   _onPointerMove(details.localFocalPoint, areaSize);
                 }
@@ -342,12 +410,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
                       ..rotateZ(cp.rotation)
                       ..scaleByDouble(cp.scale, cp.scale, cp.scale, 1)
                       ..translateByDouble(-pw / 2, -ph / 2, 0, 1),
-                    child: CustomPaint(
-                      painter: _CanvasPainter(
-                        project: widget.project,
-                        currentDrawable: _currentDrawable,
-                      ),
-                      child: SizedBox(width: pw, height: ph),
+                      child: CustomPaint(
+                        painter: _CanvasPainter(
+                          project: widget.project,
+                          currentDrawable: _currentDrawable,
+                          referenceImage: cp.referenceImage,
+                          referenceOpacity: cp.referenceOpacity,
+                          showReference: cp.showReference,
+                        ),
+                        child: SizedBox(width: pw, height: ph),
                     ),
                   ),
                 ),
@@ -376,8 +447,17 @@ class _BackgroundPainter extends CustomPainter {
 class _CanvasPainter extends CustomPainter {
   final Project project;
   final Drawable? currentDrawable;
+  final ui.Image? referenceImage;
+  final double referenceOpacity;
+  final bool showReference;
 
-  _CanvasPainter({required this.project, this.currentDrawable});
+  _CanvasPainter({
+    required this.project,
+    this.currentDrawable,
+    this.referenceImage,
+    this.referenceOpacity = 0.5,
+    this.showReference = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -387,6 +467,22 @@ class _CanvasPainter extends CustomPainter {
       Rect.fromLTWH(0, 0, size.width, size.height),
       Paint()..color = Colors.white,
     );
+
+    if (showReference && referenceImage != null) {
+      final img = referenceImage!;
+      final scale = min(size.width / img.width, size.height / img.height);
+      final dx = (size.width - img.width * scale) / 2;
+      final dy = (size.height - img.height * scale) / 2;
+      canvas.save();
+      canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
+      canvas.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromLTWH(dx, dy, img.width * scale, img.height * scale),
+        Paint()..color = Colors.white.withAlpha((referenceOpacity * 255).round()),
+      );
+      canvas.restore();
+    }
 
     for (final layer in project.layers) {
       if (!layer.visible) continue;

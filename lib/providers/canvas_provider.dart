@@ -2,6 +2,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
+import 'dart:ui' as ui;
+import 'dart:io';
 
 class CanvasProvider extends ChangeNotifier {
   Offset _offset = Offset.zero;
@@ -12,18 +14,58 @@ class CanvasProvider extends ChangeNotifier {
   double get scale => _scale;
   double get rotation => _rotation;
 
+  ui.Image? _referenceImage;
+  String _referencePath = '';
+  double _referenceOpacity = 0.5;
+  bool _showReference = false;
+
+  ui.Image? get referenceImage => _referenceImage;
+  String get referencePath => _referencePath;
+  double get referenceOpacity => _referenceOpacity;
+  bool get showReference => _showReference;
+
+  Future<void> setReferenceImage(String path) async {
+    if (!File(path).existsSync()) return;
+    final bytes = await File(path).readAsBytes();
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    _referenceImage = frame.image;
+    _referencePath = path;
+    _showReference = true;
+    notifyListeners();
+  }
+
+  void setReferenceOpacity(double value) {
+    _referenceOpacity = value.clamp(0.0, 1.0);
+    notifyListeners();
+  }
+
+  void toggleReference() {
+    _showReference = !_showReference;
+    notifyListeners();
+  }
+
+  void clearReference() {
+    _referenceImage?.dispose();
+    _referenceImage = null;
+    _referencePath = '';
+    _showReference = false;
+    notifyListeners();
+  }
+
   void handleScroll(PointerScrollEvent event) {
     final delta = event.scrollDelta;
     final ctrl = HardwareKeyboard.instance.isControlPressed;
     final shift = HardwareKeyboard.instance.isShiftPressed;
+    const double trackpadFactor = 3.0;
 
     if (ctrl) {
       zoomBy(1 - delta.dy * 0.001, Offset.zero);
     } else if (shift) {
-      _offset += Offset(delta.dy, 0);
+      _offset += Offset(delta.dy * trackpadFactor, 0);
       notifyListeners();
     } else {
-      _offset += Offset(0, delta.dy);
+      _offset += Offset(0, delta.dy * trackpadFactor);
       notifyListeners();
     }
   }

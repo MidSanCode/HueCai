@@ -29,6 +29,7 @@ class Drawable {
   final bool isShape;
   final ShapeType? shapeType;
   List<Offset> points;
+  List<double>? widths;
   Color color;
   double strokeWidth;
   double opacity;
@@ -44,6 +45,7 @@ class Drawable {
     this.isShape = false,
     this.shapeType,
     required this.points,
+    this.widths,
     this.color = Colors.black,
     this.strokeWidth = 2.0,
     this.opacity = 1.0,
@@ -178,6 +180,7 @@ class Drawable {
     bool? isShape,
     ShapeType? shapeType,
     List<Offset>? points,
+    List<double>? widths,
     Color? color,
     double? strokeWidth,
     double? opacity,
@@ -193,6 +196,7 @@ class Drawable {
         isShape: isShape ?? this.isShape,
         shapeType: shapeType ?? this.shapeType,
         points: points ?? List.from(this.points),
+        widths: widths ?? (this.widths != null ? List.from(this.widths!) : null),
         color: color ?? this.color,
         strokeWidth: strokeWidth ?? this.strokeWidth,
         opacity: opacity ?? this.opacity,
@@ -209,6 +213,7 @@ class Drawable {
         'isShape': isShape,
         'shapeType': shapeType?.name,
         'points': points.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
+        'widths': widths,
         'color': color.toARGB32(),
         'strokeWidth': strokeWidth,
         'opacity': opacity,
@@ -232,6 +237,9 @@ class Drawable {
                   (p['y'] as num).toDouble(),
                 ))
             .toList(),
+        widths: json['widths'] != null
+            ? (json['widths'] as List).map((w) => (w as num).toDouble()).toList()
+            : null,
         color: Color(json['color'] as int),
         strokeWidth: (json['strokeWidth'] as num).toDouble(),
         opacity: (json['opacity'] as num).toDouble(),
@@ -249,10 +257,23 @@ class Drawable {
 
   void _drawStroke(Canvas canvas, Paint paint) {
     if (points.length < 2) return;
-    final path = ui.Path()..moveTo(points.first.dx, points.first.dy);
-    for (int i = 1; i < points.length; i++) {
-      path.lineTo(points[i].dx, points[i].dy);
+    if (widths != null && widths!.length >= points.length) {
+      for (int i = 0; i < points.length - 1; i++) {
+        final p = Paint()
+          ..color = paint.color
+          ..strokeWidth = widths![i]
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..style = PaintingStyle.stroke
+          ..shader = paint.shader;
+        canvas.drawLine(points[i], points[i + 1], p);
+      }
+    } else {
+      final path = ui.Path()..moveTo(points.first.dx, points.first.dy);
+      for (int i = 1; i < points.length; i++) {
+        path.lineTo(points[i].dx, points[i].dy);
+      }
+      canvas.drawPath(path, paint);
     }
-    canvas.drawPath(path, paint);
   }
 }

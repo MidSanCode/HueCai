@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:uuid/uuid.dart';
+import 'package:file_picker/file_picker.dart';
 import '../models/project.dart';
 import '../models/canvas_settings.dart';
 import '../models/layer.dart';
@@ -270,8 +273,74 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> exportToPng() async {
-    // Placeholder - will be implemented with file_picker when used interactively
+  Future<void> exportImage(String format) async {
+    if (_currentProject == null) return;
+    try {
+      final w = _currentProject!.settings.width;
+      final h = _currentProject!.settings.height;
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+        Paint()..color = Colors.white,
+      );
+      for (final layer in _currentProject!.layers) {
+        if (!layer.visible) continue;
+        for (final d in layer.drawables) {
+          d.draw(canvas, Paint());
+        }
+      }
+      final picture = recorder.endRecording();
+      final img = await picture.toImage(w, h);
+      final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+      img.dispose();
+      if (byteData == null) return;
+
+      final ext = format == 'jpg' ? 'jpg' : 'png';
+      final result = await FilePicker.platform.saveFile(
+        dialogTitle: 'menu.file.export'.tr(),
+        fileName: '${_currentProject!.name}.$ext',
+        type: FileType.any,
+      );
+      if (result != null) {
+        await File(result).writeAsBytes(byteData.buffer.asUint8List());
+      }
+    } catch (_) {}
+  }
+
+  Future<void> importImage(String path) async {
+    try {
+      final file = File(path);
+      final bytes = await file.readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final img = frame.image;
+      final w = img.width;
+      final h = img.height;
+      img.dispose();
+
+      final name = file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
+      _currentProject = await _projectService.createProject(
+        name: name,
+        width: w,
+        height: h,
+      );
+      // Rasterize imported image onto the first layer
+      final layer = _currentProject!.layers.first;
+      final drawable = Drawable(
+        id: _uuid.v4(),
+        isShape: true,
+        shapeType: ShapeType.rect,
+        points: [Offset.zero, Offset(w.toDouble(), h.toDouble())],
+        color: Colors.transparent,
+        isFilled: true,
+        strokeWidth: 0,
+      );
+      layer.drawables.add(drawable);
+      _hasUnsavedChanges = true;
+      _historyService.clear();
+      notifyListeners();
+    } catch (_) {}
   }
 
   void addDrawable(Drawable drawable) {
@@ -323,4 +392,15 @@ class ProjectProvider extends ChangeNotifier {
     }
     return null;
   }
+
+  // ─── Workspace management ────────────────────────────────
+
+  Future<List<File>> listTrashFiles() => _projectService.listTrashFiles();
+  Future<bool> restoreProject(String path) => _projectService.restoreProject(path);
+  Future<bool> emptyTrash() => _projectService.emptyTrash();
+  Future<bool> renameProject(String filePath, String newName) => _projectService.renameProject(filePath, newName);
+  Future<bool> createFolder(String name) => _projectService.createFolder(name);
+  Future<List<String>> listFolders() => _projectService.listFolders();
+  Future<bool> moveToFolder(List<String> paths, String folder) => _projectService.moveToFolder(paths, folder);
+  Future<bool> batchExport(List<String> paths, String destDir) => _projectService.batchExport(paths, destDir);
 }

@@ -11,6 +11,7 @@ import '../widgets/panels/color_panel.dart';
 import '../widgets/panels/layer_panel.dart';
 import '../widgets/panels/brush_panel.dart';
 import '../widgets/canvas/paint_canvas.dart';
+import '../widgets/dialogs/brush_editor_dialog.dart';
 
 class EditorScreen extends StatefulWidget {
   const EditorScreen({super.key});
@@ -103,6 +104,8 @@ class _EditorScreenState extends State<EditorScreen> {
               () => context.read<ProjectProvider>().undo(),
           SingleActivator(LogicalKeyboardKey.keyY, control: true):
               () => context.read<ProjectProvider>().redo(),
+          SingleActivator(LogicalKeyboardKey.f5):
+              () => BrushEditorDialog.show(context),
         },
         child: Focus(
           autofocus: true,
@@ -116,20 +119,21 @@ class _EditorScreenState extends State<EditorScreen> {
               }
             },
             child: Scaffold(
-              body: SafeArea(
-                child: Column(
-                  children: [
-                    EditorMenuBar(compact: !isDesktop && !isWide),
-                    Expanded(
+              body: Column(
+                children: [
+                  EditorMenuBar(compact: !isDesktop && !isWide),
+                  Expanded(
+                    child: SafeArea(
                       child: _EditorLayout(
                         project: project,
                         showRightPanel: isDesktop || isWide || _showRightPanel,
                         onToggleRightPanel: () =>
                             setState(() => _showRightPanel = !_showRightPanel),
+                        isOverlay: !isDesktop && !isWide,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -143,17 +147,109 @@ class _EditorLayout extends StatelessWidget {
   final dynamic project;
   final bool showRightPanel;
   final VoidCallback onToggleRightPanel;
+  final bool isOverlay;
 
   const _EditorLayout({
     required this.project,
     required this.showRightPanel,
     required this.onToggleRightPanel,
+    this.isOverlay = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final toolProvider = context.watch<ToolProvider>();
     final theme = Theme.of(context);
+
+    final rightPanel = Material(
+      elevation: 4,
+      color: theme.colorScheme.surface,
+      child: SizedBox(
+        width: 180,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right, size: 20),
+                  onPressed: onToggleRightPanel,
+                  tooltip: 'app.hide_panels'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  padding: const EdgeInsets.all(4),
+                ),
+              ],
+            ),
+            ColorPanel(toolProvider: toolProvider),
+            const BrushPanel(),
+            const Expanded(child: LayerPanel()),
+          ],
+        ),
+      ),
+    );
+
+    if (isOverlay) {
+      return Stack(
+        children: [
+          Row(
+            children: [
+              // Left: back button + tool panel
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back, size: 20),
+                    onPressed: () => _goBack(context),
+                    tooltip: 'app.exit'.tr(),
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                    padding: const EdgeInsets.all(6),
+                  ),
+                  Expanded(child: ToolPanel(toolProvider: toolProvider)),
+                ],
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: PaintCanvas(project: project),
+                ),
+              ),
+            ],
+          ),
+          if (!showRightPanel)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, size: 20),
+                    onPressed: onToggleRightPanel,
+                    tooltip: 'app.show_panels'.tr(),
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    padding: const EdgeInsets.all(4),
+                  ),
+                ],
+              ),
+            ),
+          if (showRightPanel)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 200),
+                offset: showRightPanel ? Offset.zero : const Offset(1, 0),
+                child: rightPanel,
+              ),
+            ),
+        ],
+      );
+    }
 
     return Row(
       children: [
@@ -195,35 +291,7 @@ class _EditorLayout extends StatelessWidget {
             ],
           ),
         // Right: color, brush, layer panels
-        if (showRightPanel)
-          Material(
-            elevation: 4,
-            color: theme.colorScheme.surface,
-            child: SizedBox(
-              width: 180,
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.chevron_right, size: 20),
-                        onPressed: onToggleRightPanel,
-                        tooltip: 'app.hide_panels'.tr(),
-                        visualDensity: VisualDensity.compact,
-                        constraints:
-                            const BoxConstraints(minWidth: 28, minHeight: 28),
-                        padding: const EdgeInsets.all(4),
-                      ),
-                    ],
-                  ),
-                  ColorPanel(toolProvider: toolProvider),
-                  const BrushPanel(),
-                  const Expanded(child: LayerPanel()),
-                ],
-              ),
-            ),
-          ),
+        if (showRightPanel) rightPanel,
       ],
     );
   }

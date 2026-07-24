@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../providers/tool_provider.dart';
 import '../providers/canvas_provider.dart';
 import '../providers/project_provider.dart';
+import '../providers/app_settings.dart';
 import '../models/drawable.dart';
 import '../screens/settings_screen.dart';
 import '../screens/workspace_screen.dart';
+import '../screens/editor_screen.dart';
+import 'dialogs/brush_editor_dialog.dart';
 
 class EditorMenuBar extends StatelessWidget {
   final bool compact;
@@ -41,16 +45,21 @@ class _FullMenuBar extends StatelessWidget {
               );
             }),
             _MenuItem('menu.file.open'.tr(), Icons.folder_open, () {
-              context.read<ProjectProvider>().loadRecentProjects();
+              _openHcpFile(context);
             }),
+            _MenuItem('menu.file.import'.tr(), Icons.image, () {
+              _importImageFile(context);
+            }),
+            const _MenuDivider(),
             _MenuItem('menu.file.save'.tr(), Icons.save, () {
               context.read<ProjectProvider>().saveProject();
             }),
             _MenuItem('menu.file.save_as'.tr(), Icons.save_alt, () {
               context.read<ProjectProvider>().saveAsProject();
             }),
-            _MenuItem('menu.file.export'.tr(), Icons.file_download, () {
-              context.read<ProjectProvider>().exportToPng();
+            const _MenuDivider(),
+            _MenuItem('menu.file.export'.tr(), Icons.image, () {
+              _showExportDialog(context);
             }),
           ]),
           _MenuButton(label: 'menu.edit'.tr(), children: [
@@ -113,6 +122,11 @@ class _FullMenuBar extends StatelessWidget {
               ScaffoldMessenger.of(context)
                   .showSnackBar(SnackBar(content: Text('Not yet implemented')));
             }),
+            const _MenuDivider(),
+            _MenuItem('menu.image.import_reference'.tr(), Icons.image,
+                () => _importReference(context)),
+            _MenuItem('menu.image.clear_reference'.tr(), Icons.image_not_supported,
+                () => context.read<CanvasProvider>().clearReference()),
           ]),
           _MenuButton(label: 'menu.layer'.tr(), children: [
             _MenuItem('menu.layer.new'.tr(), Icons.layers, () {
@@ -185,9 +199,15 @@ class _FullMenuBar extends StatelessWidget {
                 () => context.read<ToolProvider>().setTool(ToolType.fill)),
             _MenuItem('menu.tool.eyedropper'.tr(), Icons.colorize,
                 () => context.read<ToolProvider>().setTool(ToolType.eyedropper)),
+            const _MenuDivider(),
+            _MenuItem('menu.tool.stabilizer'.tr(), Icons.spa,
+                () => _showStabilizerDialog(context)),
           ]),
           _MenuButton(label: 'menu.settings'.tr(), children: [
-            _MenuItem('menu.settings.open'.tr(), Icons.settings, () {
+            _MenuItem('menu.settings.brush'.tr(), Icons.brush, () {
+              BrushEditorDialog.show(context);
+            }),
+            _MenuItem('menu.settings.app_settings'.tr(), Icons.settings, () {
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const SettingsScreen()),
               );
@@ -265,6 +285,12 @@ class _CompactMenuBar extends StatelessWidget {
                         project.settings.width.toDouble(),
                         project.settings.height.toDouble());
                   }
+                case 'stabilizer':
+                  _showStabilizerDialog(context);
+                case 'import_ref':
+                  _importReference(context);
+                case 'brush_settings':
+                  BrushEditorDialog.show(context);
                 case 'open_settings':
                   Navigator.of(context).push(
                     MaterialPageRoute(
@@ -287,11 +313,16 @@ class _CompactMenuBar extends StatelessWidget {
               _popupItem('tool_fill', Icons.format_color_fill, 'menu.tool.fill'),
               _popupItem('tool_eyedropper', Icons.colorize, 'menu.tool.eyedropper'),
               const PopupMenuDivider(),
+              _popupItem('stabilizer', Icons.spa, 'menu.tool.stabilizer'),
+              _popupItem('import_ref', Icons.image, 'menu.image.import_reference'),
+              const PopupMenuDivider(),
               _popupItem('fit', Icons.fit_screen, 'menu.view.fit_screen'),
               const PopupMenuDivider(),
               _popupItem('layer_new', Icons.layers, 'menu.layer.new'),
               const PopupMenuDivider(),
-              _popupItem('open_settings', Icons.settings, 'menu.settings.open'),
+              const PopupMenuDivider(),
+              _popupItem('brush_settings', Icons.brush, 'menu.settings.brush'),
+              _popupItem('open_settings', Icons.settings, 'menu.settings.app_settings'),
               _popupItem('about', Icons.info_outline, 'menu.help.about'),
             ],
           ),
@@ -323,12 +354,12 @@ class _CompactBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      icon: Icon(icon, size: 20),
+      icon: Icon(icon, size: 18),
       onPressed: onPressed,
       tooltip: tooltip,
       visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-      padding: const EdgeInsets.all(6),
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      padding: const EdgeInsets.all(4),
     );
   }
 }
@@ -390,14 +421,128 @@ class _MenuButtonState extends State<_MenuButton> {
       child: GestureDetector(
         onTap: _showMenu,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           color: _hovered
               ? Theme.of(context).colorScheme.surfaceContainerHigh
               : Colors.transparent,
-          child: Text(widget.label, style: const TextStyle(fontSize: 13)),
+          child: Text(widget.label, style: const TextStyle(fontSize: 12)),
         ),
       ),
     );
+  }
+}
+
+void _showStabilizerDialog(BuildContext context) {
+  final settings = context.read<AppSettings>();
+  showDialog(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        title: Text('menu.tool.stabilizer'.tr()),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('${settings.stabilizer.round()}', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Slider(
+              value: settings.stabilizer,
+              min: 0,
+              max: 100,
+              divisions: 100,
+              label: '${settings.stabilizer.round()}',
+              onChanged: (v) {
+                settings.setStabilizer(v);
+                setState(() {});
+              },
+            ),
+            Text('menu.tool.stabilizer_hint'.tr(), style: const TextStyle(fontSize: 11)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('dialog.close'.tr()),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+void _showExportDialog(BuildContext context) {
+  final theme = Theme.of(context);
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('menu.file.export'.tr()),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: Icon(Icons.image, color: theme.colorScheme.primary),
+            title: Text('menu.file.export_png'.tr()),
+            onTap: () {
+              Navigator.of(ctx).pop();
+              context.read<ProjectProvider>().exportImage('png');
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.image, color: theme.colorScheme.primary),
+            title: Text('menu.file.export_jpg'.tr()),
+            onTap: () {
+              Navigator.of(ctx).pop();
+              context.read<ProjectProvider>().exportImage('jpg');
+            },
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(ctx).pop(), child: Text('dialog.cancel'.tr())),
+      ],
+    ),
+  );
+}
+
+void _importReference(BuildContext context) async {
+  final canvasProvider = context.read<CanvasProvider>();
+  final result = await FilePicker.platform.pickFiles(
+    type: FileType.image,
+  );
+  if (result != null && result.files.single.path != null) {
+    canvasProvider.setReferenceImage(result.files.single.path!);
+  }
+}
+
+void _openHcpFile(BuildContext context) async {
+  final pp = context.read<ProjectProvider>();
+  final result = await FilePicker.platform.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: ['hcp'],
+  );
+  if (result != null && result.files.single.path != null) {
+    await pp.openProject(result.files.single.path!);
+    if (context.mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const EditorScreen()),
+        (_) => false,
+      );
+    }
+  }
+}
+
+void _importImageFile(BuildContext context) async {
+  final pp = context.read<ProjectProvider>();
+  final result = await FilePicker.platform.pickFiles(
+    type: FileType.image,
+  );
+  if (result != null && result.files.single.path != null) {
+    final path = result.files.single.path!;
+    await pp.importImage(path);
+    if (context.mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const EditorScreen()),
+      );
+    }
   }
 }
 

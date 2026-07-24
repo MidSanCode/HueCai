@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 enum LogLevel { debug, info, warning, error }
@@ -33,12 +34,16 @@ class AppLogger {
       message: msg,
     );
     _entries.add(entry);
-    _logFile?.writeAsStringSync('${entry.toString()}\n', mode: FileMode.append);
+    final line = '${entry.toString()}\n';
+    _logFile?.writeAsStringSync(line, mode: FileMode.append);
+    debugPrint(line.trimRight());
   }
 
   Future<String> export() async {
     final dir = await getApplicationDocumentsDirectory();
-    final exportFile = File('${dir.path}/huecai_logs/export_${DateTime.now().millisecondsSinceEpoch}.log');
+    final logDir = Directory('${dir.path}/huecai_logs');
+    if (!await logDir.exists()) await logDir.create(recursive: true);
+    final exportFile = File('${logDir.path}/export_${DateTime.now().millisecondsSinceEpoch}.log');
     final buffer = StringBuffer();
     for (final entry in _entries) {
       buffer.writeln(entry.toString());

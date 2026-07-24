@@ -96,4 +96,5 @@ class ToolProvider extends ChangeNotifier {
     _currentBrush.opacity = _brushOpacity;
     notifyListeners();
   }
+
 }
