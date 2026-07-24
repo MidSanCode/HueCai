@@ -21,7 +21,7 @@ class ToolProvider extends ChangeNotifier {
   Color _primaryColor = Colors.black;
   Color _secondaryColor = Colors.white;
   Brush _currentBrush = Brush.defaults().first;
-  double _brushSize = 10.0;
+  double _brushSize = 5.0;
   double _brushOpacity = 1.0;
   bool _isStandardMode = false;
 
@@ -86,7 +86,7 @@ class ToolProvider extends ChangeNotifier {
   }
 
   void setBrushSize(double size) {
-    _brushSize = size.clamp(1.0, 500.0);
+    _brushSize = size.clamp(0.5, 100.0);
     _currentBrush.size = _brushSize;
     notifyListeners();
   }

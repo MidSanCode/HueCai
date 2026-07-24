@@ -30,6 +30,12 @@ class Layer {
   bool locked;
   BlendModeExt blendMode;
   ui.Image? image;
+  String? imagePath;
+  Offset imageOffset;
+  double imageRotation;
+  double imageScale;
+  bool imageFlipH;
+  bool imageFlipV;
   String? thumbnailPath;
   List<Drawable> drawables;
 
@@ -41,6 +47,12 @@ class Layer {
     this.locked = false,
     this.blendMode = BlendModeExt.normal,
     this.image,
+    this.imagePath,
+    this.imageOffset = Offset.zero,
+    this.imageRotation = 0,
+    this.imageScale = 1.0,
+    this.imageFlipH = false,
+    this.imageFlipV = false,
     this.thumbnailPath,
     List<Drawable>? drawables,
   }) : drawables = drawables ?? [];
@@ -53,6 +65,12 @@ class Layer {
     bool? locked,
     BlendModeExt? blendMode,
     ui.Image? image,
+    String? imagePath,
+    Offset? imageOffset,
+    double? imageRotation,
+    double? imageScale,
+    bool? imageFlipH,
+    bool? imageFlipV,
     String? thumbnailPath,
     List<Drawable>? drawables,
   }) =>
@@ -64,6 +82,12 @@ class Layer {
         locked: locked ?? this.locked,
         blendMode: blendMode ?? this.blendMode,
         image: image ?? this.image,
+        imagePath: imagePath ?? this.imagePath,
+        imageOffset: imageOffset ?? this.imageOffset,
+        imageRotation: imageRotation ?? this.imageRotation,
+        imageScale: imageScale ?? this.imageScale,
+        imageFlipH: imageFlipH ?? this.imageFlipH,
+        imageFlipV: imageFlipV ?? this.imageFlipV,
         thumbnailPath: thumbnailPath ?? this.thumbnailPath,
         drawables: drawables ?? this.drawables,
       );
@@ -75,6 +99,12 @@ class Layer {
         'opacity': opacity,
         'locked': locked,
         'blendMode': blendMode.name,
+        'imagePath': imagePath,
+        'imageOffset': {'x': imageOffset.dx, 'y': imageOffset.dy},
+        'imageRotation': imageRotation,
+        'imageScale': imageScale,
+        'imageFlipH': imageFlipH,
+        'imageFlipV': imageFlipV,
         'thumbnailPath': thumbnailPath,
         'drawables': drawables.map((d) => d.toJson()).toList(),
       };
@@ -88,6 +118,17 @@ class Layer {
         blendMode: BlendModeExt.values.firstWhere(
             (e) => e.name == json['blendMode'],
             orElse: () => BlendModeExt.normal),
+        imagePath: json['imagePath'] as String?,
+        imageOffset: json['imageOffset'] != null
+            ? Offset(
+                (json['imageOffset'] as Map)['x'] as double,
+                (json['imageOffset'] as Map)['y'] as double,
+              )
+            : Offset.zero,
+        imageRotation: (json['imageRotation'] as num?)?.toDouble() ?? 0,
+        imageScale: (json['imageScale'] as num?)?.toDouble() ?? 1.0,
+        imageFlipH: json['imageFlipH'] as bool? ?? false,
+        imageFlipV: json['imageFlipV'] as bool? ?? false,
         thumbnailPath: json['thumbnailPath'] as String?,
         drawables: (json['drawables'] as List?)
                 ?.map(

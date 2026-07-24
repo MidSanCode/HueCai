@@ -123,6 +123,8 @@ class _FullMenuBar extends StatelessWidget {
                   .showSnackBar(SnackBar(content: Text('Not yet implemented')));
             }),
             const _MenuDivider(),
+            _MenuItem('menu.image.import_image'.tr(), Icons.add_photo_alternate,
+                () => _importImageToCanvas(context)),
             _MenuItem('menu.image.import_reference'.tr(), Icons.image,
                 () => _importReference(context)),
             _MenuItem('menu.image.clear_reference'.tr(), Icons.image_not_supported,
@@ -527,6 +529,16 @@ void _openHcpFile(BuildContext context) async {
         (_) => false,
       );
     }
+  }
+}
+
+void _importImageToCanvas(BuildContext context) async {
+  final pp = context.read<ProjectProvider>();
+  final result = await FilePicker.platform.pickFiles(
+    type: FileType.image,
+  );
+  if (result != null && result.files.single.path != null) {
+    await pp.importImageToCanvas(result.files.single.path!);
   }
 }
 

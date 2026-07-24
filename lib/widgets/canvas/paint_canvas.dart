@@ -44,6 +44,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
   DateTime? _lastPointerTime;
   Offset? _lastPointerPos;
   double _smoothedWidth = 0;
+  double _currentPressure = 0.5;
+
+  // Image placement drag
+  Offset? _imagePlaceStartOffset;
+  Offset? _imagePlaceStartPos;
 
   bool _isOnCanvas(Offset canvasPos) {
     return canvasPos.dx >= 0 &&
@@ -85,8 +90,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
     _log.info('PointerDown tool=${tp.currentTool} canvasPos=(${canvasPos.dx.toStringAsFixed(1)}, ${canvasPos.dy.toStringAsFixed(1)})');
 
+    final pp = context.read<ProjectProvider>();
+    if (pp.isPlacingImage) {
+      _dragConfirmed = true;
+      _imagePlaceStartOffset = pp.imagePlacingOffset;
+      _imagePlaceStartPos = pos;
+      return;
+    }
+
     if (tp.currentTool == ToolType.fill) {
-      final pp = context.read<ProjectProvider>();
       pp.saveSnapshot();
       final hit = _hitTest(canvasPos);
       if (hit != null) pp.toggleFillDrawable(hit, tp.primaryColor);
@@ -94,7 +106,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _gradientStart = canvasPos;
     } else if (tp.currentTool == ToolType.move) {
       final hit = _hitTest(canvasPos);
-      if (hit != null) context.read<ProjectProvider>().selectDrawable(hit);
+      if (hit != null) pp.selectDrawable(hit);
     }
     // Brush/eraser/shape start is deferred to _tryBeginDrag
   }
@@ -144,6 +156,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
 
+    // Image placement: move the image
+    if (pp.isPlacingImage && _imagePlaceStartPos != null && _imagePlaceStartOffset != null) {
+      final delta = pos - _imagePlaceStartPos!;
+      final canvasDelta = delta / context.read<CanvasProvider>().scale;
+      pp.updateImagePlacement(offset: _imagePlaceStartOffset! + canvasDelta);
+      return;
+    }
+
     // Gradient: apply drag threshold before updating
     if (tp.currentTool == ToolType.gradient && _gradientStart != null) {
       if (!_dragConfirmed) {
@@ -187,25 +207,41 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
     if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
       final as = context.read<AppSettings>();
-      // Velocity-based dynamic width
       final now = DateTime.now();
-      double currentWidth = tp.brushSize;
+      double widthFromVelocity = tp.brushSize;
+      double widthFromPressure = tp.brushSize;
+
+      // Velocity-based width
       if (as.velocityWidthEnabled && _lastPointerTime != null && _lastPointerPos != null) {
         final dt = now.difference(_lastPointerTime!).inMilliseconds / 1000.0;
         final dist = (pos - _lastPointerPos!).distance;
         if (dt > 0) {
-          const double maxVel = 6000;
-          const double minVel = 100;
+          const double maxVel = 8000;
+          const double minVel = 200;
           final velocity = (dist / dt).clamp(minVel, maxVel);
           final ratio = (velocity - minVel) / (maxVel - minVel);
           final range = as.velocityMaxScale - as.velocityMinScale;
           final scale = as.velocityMaxScale - ratio * range;
-          currentWidth = tp.brushSize * scale;
+          widthFromVelocity = tp.brushSize * scale;
         }
       }
-      // Exponential smoothing for natural transition
+
+      // Pressure-based width (if supported)
+      if (as.pressureWidthEnabled && as.hasPressure && _currentPressure > 0) {
+        final pressureRatio = (_currentPressure).clamp(0.0, 1.0);
+        final range = as.pressureMaxScale - as.pressureMinScale;
+        final scale = as.pressureMinScale + pressureRatio * range;
+        widthFromPressure = tp.brushSize * scale;
+      } else {
+        widthFromPressure = widthFromVelocity;
+      }
+
+      // Blend velocity and pressure
+      double currentWidth = widthFromVelocity * (1 - as.velocityPressureBlend) + widthFromPressure * as.velocityPressureBlend;
+
+      // Responsive smoothing
       if (_smoothedWidth > 0) {
-        currentWidth = currentWidth * as.velocitySmoothing + _smoothedWidth * (1 - as.velocitySmoothing);
+        currentWidth = _smoothedWidth + (currentWidth - _smoothedWidth) * as.velocitySmoothing;
       }
       _smoothedWidth = currentWidth;
       _lastPointerTime = now;
@@ -229,10 +265,25 @@ class _PaintCanvasState extends State<PaintCanvas> {
       } else {
         drawPos = canvasPos;
       }
-      _currentDrawable!.points.add(drawPos);
-      _currentDrawable!.widths ??= [];
-      _currentDrawable!.widths!.add(currentWidth);
-      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+    _currentDrawable!.widths ??= [];
+    // Interpolate intermediate points for smooth high-speed turns
+    if (_currentDrawable!.points.isNotEmpty) {
+      final lastPt = _currentDrawable!.points.last;
+      final dist = (drawPos - lastPt).distance;
+      const double maxStep = 4.0;
+      if (dist > maxStep) {
+        final steps = (dist / maxStep).ceil();
+        for (int s = 1; s < steps; s++) {
+          final t = s / steps;
+          final mid = Offset.lerp(lastPt, drawPos, t)!;
+          _currentDrawable!.points.add(mid);
+          _currentDrawable!.widths!.add(currentWidth);
+        }
+      }
+    }
+    _currentDrawable!.points.add(drawPos);
+    _currentDrawable!.widths!.add(currentWidth);
+    pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
     } else if (tp.currentTool == ToolType.shape) {
       final snapped = _snapShapeEnd(tp, canvasPos);
       _currentDrawable!.points = [_currentDrawable!.points.first, snapped];
@@ -244,6 +295,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _stabilizerQueue.clear();
     _lastPointerTime = null;
     _lastPointerPos = null;
+    _imagePlaceStartOffset = null;
+    _imagePlaceStartPos = null;
     final pp = context.read<ProjectProvider>();
     // If drag was never confirmed, discard the pending drawable
     if (!_dragConfirmed && _currentDrawable != null) {
@@ -337,6 +390,16 @@ class _PaintCanvasState extends State<PaintCanvas> {
       builder: (context, constraints) {
         final areaSize = Size(constraints.maxWidth, constraints.maxHeight);
         return Listener(
+          onPointerMove: (event) {
+            _currentPressure = event.pressure;
+          },
+          onPointerDown: (event) {
+            _currentPressure = event.pressure;
+            // Check if device supports pressure
+            if (event.pressureMax > 0) {
+              context.read<AppSettings>().updatePressureCapability(true);
+            }
+          },
           onPointerSignal: (event) {
             if (event is PointerScrollEvent) {
               cp.handleScroll(event);
@@ -463,10 +526,6 @@ class _CanvasPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     canvas.save();
     canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      Paint()..color = Colors.white,
-    );
 
     if (showReference && referenceImage != null) {
       final img = referenceImage!;
@@ -486,6 +545,23 @@ class _CanvasPainter extends CustomPainter {
 
     for (final layer in project.layers) {
       if (!layer.visible) continue;
+      // Draw image if present
+      if (layer.image != null) {
+        final img = layer.image!;
+        canvas.save();
+        canvas.translate(layer.imageOffset.dx + img.width / 2, layer.imageOffset.dy + img.height / 2);
+        canvas.rotate(layer.imageRotation);
+        final flipX = layer.imageFlipH ? -1.0 : 1.0;
+        final flipY = layer.imageFlipV ? -1.0 : 1.0;
+        canvas.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+        canvas.drawImageRect(
+          img,
+          Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+          Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
+          Paint()..color = Colors.white.withValues(alpha: layer.opacity),
+        );
+        canvas.restore();
+      }
       for (final d in layer.drawables) {
         d.draw(canvas, Paint());
         if (d.selected) {

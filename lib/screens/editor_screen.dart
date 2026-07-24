@@ -7,6 +7,7 @@ import '../providers/tool_provider.dart';
 import '../providers/canvas_provider.dart';
 import '../widgets/menu_bar.dart';
 import '../widgets/tools/tool_panel.dart';
+import '../widgets/tools/image_edit_toolbar.dart';
 import '../widgets/panels/color_panel.dart';
 import '../widgets/panels/layer_panel.dart';
 import '../widgets/panels/brush_panel.dart';
@@ -122,6 +123,7 @@ class _EditorScreenState extends State<EditorScreen> {
               body: Column(
                 children: [
                   EditorMenuBar(compact: !isDesktop && !isWide),
+                  const ImageEditToolbar(),
                   Expanded(
                     child: SafeArea(
                       child: _EditorLayout(

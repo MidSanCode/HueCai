@@ -69,10 +69,17 @@ class LayerPanel extends StatelessWidget {
                       final idx = project.layers.length - 1 - i;
                       final layer = project.layers[idx];
                       final isCurrent = project.currentLayerIndex == idx;
+                      final isBg = idx == 0;
+                      final bgColor = isBg && layer.drawables.isNotEmpty
+                          ? layer.drawables.first.color
+                          : null;
                       return _LayerItem(
                         layer: layer,
                         isCurrent: isCurrent,
                         index: idx,
+                        isBackground: isBg,
+                        bgColor: bgColor,
+                        onBgColorTap: isBg ? () => _showBgColorPicker(ctx, provider, bgColor!) : null,
                         onTap: () => provider.setCurrentLayer(idx),
                         onDelete: () => provider.deleteLayer(idx),
                         onDuplicate: () => provider.duplicateLayer(idx),
@@ -100,6 +107,9 @@ class _LayerItem extends StatefulWidget {
   final VoidCallback onDuplicate;
   final VoidCallback onMergeDown;
   final ValueChanged<double> onOpacityChanged;
+  final bool isBackground;
+  final Color? bgColor;
+  final VoidCallback? onBgColorTap;
 
   const _LayerItem({
     required this.layer,
@@ -110,6 +120,9 @@ class _LayerItem extends StatefulWidget {
     required this.onDuplicate,
     required this.onMergeDown,
     required this.onOpacityChanged,
+    this.isBackground = false,
+    this.bgColor,
+    this.onBgColorTap,
   });
 
   @override
@@ -125,9 +138,13 @@ class _LayerItemState extends State<_LayerItem> {
     final pp = context.read<ProjectProvider>();
     return GestureDetector(
       onSecondaryTapDown: (d) => _tapPosition = d.globalPosition,
-      onSecondaryTap: () => _showContextMenu(context),
+      onSecondaryTap: () {
+        if (!widget.isBackground) _showContextMenu(context);
+      },
       onLongPressStart: (d) => _tapPosition = d.globalPosition,
-      onLongPress: () => _showContextMenu(context),
+      onLongPress: () {
+        if (!widget.isBackground) _showContextMenu(context);
+      },
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 1),
         decoration: BoxDecoration(
@@ -155,7 +172,9 @@ class _LayerItemState extends State<_LayerItem> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: InkWell(
-                    onDoubleTap: () => _renameLayer(context, pp),
+                    onDoubleTap: () {
+                      if (!widget.isBackground) _renameLayer(context, pp);
+                    },
                     child: Text(
                       widget.layer.name,
                       style: TextStyle(
@@ -166,11 +185,22 @@ class _LayerItemState extends State<_LayerItem> {
                     ),
                   ),
                 ),
-                if (widget.layer.locked)
+                if (widget.isBackground && widget.bgColor != null)
                   GestureDetector(
-                    onTap: () => pp.toggleLayerLock(widget.index),
-                    child: Icon(Icons.lock, size: 12, color: theme.colorScheme.onSurfaceVariant),
+                    onTap: widget.onBgColorTap,
+                    child: Container(
+                      width: 14,
+                      height: 14,
+                      margin: const EdgeInsets.only(right: 4),
+                      decoration: BoxDecoration(
+                        color: widget.bgColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: theme.colorScheme.outline, width: 1),
+                      ),
+                    ),
                   ),
+                if (widget.layer.locked)
+                  Icon(Icons.lock, size: 12, color: theme.colorScheme.onSurfaceVariant),
               ],
             ),
           ),
@@ -301,4 +331,50 @@ class _LayerItemState extends State<_LayerItem> {
       ),
     );
   }
+}
+
+void _showBgColorPicker(BuildContext context, ProjectProvider pp, Color currentBg) {
+  final theme = Theme.of(context);
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Background Color'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 48, height: 48,
+              decoration: BoxDecoration(color: currentBg, borderRadius: BorderRadius.circular(8), border: Border.all(color: theme.colorScheme.outline)),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6, runSpacing: 6,
+              children: [
+                Colors.white, Colors.black, Colors.grey, Colors.red,
+                Colors.orange, Colors.yellow, Colors.green, Colors.cyan,
+                Colors.blue, Colors.indigo, Colors.purple, Colors.brown,
+              ].map((c) => GestureDetector(
+                onTap: () {
+                  pp.setBackgroundColor(c);
+                  Navigator.of(ctx).pop();
+                },
+                child: Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(
+                    color: c,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: c == currentBg ? theme.colorScheme.primary : theme.colorScheme.outline, width: c == currentBg ? 2 : 1),
+                  ),
+                ),
+              )).toList(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(ctx).pop(), child: Text('dialog.cancel'.tr())),
+      ],
+    ),
+  );
 }

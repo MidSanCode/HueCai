@@ -10,7 +10,12 @@ class AppSettings extends ChangeNotifier {
   bool _velocityWidthEnabled = true;
   double _velocityMinScale = 0.35;
   double _velocityMaxScale = 1.0;
-  double _velocitySmoothing = 0.3;
+  double _velocitySmoothing = 0.6;
+  bool _pressureWidthEnabled = true;
+  double _pressureMinScale = 0.3;
+  double _pressureMaxScale = 1.0;
+  double _velocityPressureBlend = 0.0;
+  bool _hasPressure = false;
 
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
@@ -19,6 +24,16 @@ class AppSettings extends ChangeNotifier {
   double get velocityMinScale => _velocityMinScale;
   double get velocityMaxScale => _velocityMaxScale;
   double get velocitySmoothing => _velocitySmoothing;
+  bool get pressureWidthEnabled => _pressureWidthEnabled;
+  double get pressureMinScale => _pressureMinScale;
+  double get pressureMaxScale => _pressureMaxScale;
+  double get velocityPressureBlend => _velocityPressureBlend;
+  bool get hasPressure => _hasPressure;
+
+  void updatePressureCapability(bool v) {
+    _hasPressure = v;
+    notifyListeners();
+  }
 
   Future<void> load() async {
     try {
@@ -35,7 +50,11 @@ class AppSettings extends ChangeNotifier {
         _velocityWidthEnabled = json['velocityWidthEnabled'] as bool? ?? true;
         _velocityMinScale = (json['velocityMinScale'] as num?)?.toDouble() ?? 0.35;
         _velocityMaxScale = (json['velocityMaxScale'] as num?)?.toDouble() ?? 1.0;
-        _velocitySmoothing = (json['velocitySmoothing'] as num?)?.toDouble() ?? 0.3;
+        _velocitySmoothing = (json['velocitySmoothing'] as num?)?.toDouble() ?? 0.6;
+        _pressureWidthEnabled = json['pressureWidthEnabled'] as bool? ?? true;
+        _pressureMinScale = (json['pressureMinScale'] as num?)?.toDouble() ?? 0.3;
+        _pressureMaxScale = (json['pressureMaxScale'] as num?)?.toDouble() ?? 1.0;
+        _velocityPressureBlend = (json['velocityPressureBlend'] as num?)?.toDouble() ?? 0.0;
         notifyListeners();
       }
     } catch (_) {}
@@ -53,6 +72,10 @@ class AppSettings extends ChangeNotifier {
         'velocityMinScale': _velocityMinScale,
         'velocityMaxScale': _velocityMaxScale,
         'velocitySmoothing': _velocitySmoothing,
+        'pressureWidthEnabled': _pressureWidthEnabled,
+        'pressureMinScale': _pressureMinScale,
+        'pressureMaxScale': _pressureMaxScale,
+        'velocityPressureBlend': _velocityPressureBlend,
       }));
     } catch (_) {}
   }
@@ -79,4 +102,8 @@ class AppSettings extends ChangeNotifier {
   void setVelocityMinScale(double v) { _velocityMinScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setVelocityMaxScale(double v) { _velocityMaxScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setVelocitySmoothing(double v) { _velocitySmoothing = v.clamp(0.0, 1.0); _save(); notifyListeners(); }
+  void setPressureWidthEnabled(bool v) { _pressureWidthEnabled = v; _save(); notifyListeners(); }
+  void setPressureMinScale(double v) { _pressureMinScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
+  void setPressureMaxScale(double v) { _pressureMaxScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
+  void setVelocityPressureBlend(double v) { _velocityPressureBlend = v.clamp(0.0, 1.0); _save(); notifyListeners(); }
 }

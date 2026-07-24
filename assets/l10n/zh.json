@@ -194,6 +194,7 @@
   "layer.rename": "重命名图层",
   "menu.tool.stabilizer": "抖动修正",
   "menu.tool.stabilizer_hint": "值越高线条越平滑",
+  "menu.image.import_image": "导入图片到画布",
   "menu.image.import_reference": "导入参考图",
   "menu.image.clear_reference": "清除参考图",
   "settings.stabilizer": "抖动修正",
@@ -216,5 +217,11 @@
   "workspace.trash": "回收站",
   "workspace.empty_trash": "清空回收站",
   "workspace.trash_empty": "回收站为空",
-  "workspace.restore": "恢复"
+  "workspace.restore": "恢复",
+  "brush.pressure": "力度传感宽度",
+  "brush.pressure_unavailable": "未检测到力度外设 — 将使用速度控制",
+  "brush.pressure_enable": "启用力度宽度",
+  "brush.pressure_min": "最小力度比例",
+  "brush.pressure_max": "最大力度比例",
+  "brush.vp_blend": "速度/力度混合"
 }

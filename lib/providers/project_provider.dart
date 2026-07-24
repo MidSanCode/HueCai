@@ -208,6 +208,15 @@ class ProjectProvider extends ChangeNotifier {
     _markChanged();
   }
 
+  void setBackgroundColor(Color color) {
+    if (_currentProject == null || _currentProject!.layers.isEmpty) return;
+    final bgLayer = _currentProject!.layers.first;
+    for (final d in bgLayer.drawables) {
+      d.color = color;
+    }
+    _markChanged();
+  }
+
   void setLayerOpacity(int index, double opacity) {
     if (_currentProject == null || index >= _currentProject!.layers.length) return;
     _currentProject!.layers[index].opacity = opacity.clamp(0.0, 1.0);
@@ -267,7 +276,8 @@ class ProjectProvider extends ChangeNotifier {
     final dir = await getApplicationDocumentsDirectory();
     final saveDir = Directory('${dir.path}/huecai_projects');
     if (!await saveDir.exists()) await saveDir.create(recursive: true);
-    final path = '${saveDir.path}/${_currentProject!.name}.hcp';
+    final basePath = '${saveDir.path}/${_currentProject!.name}.hcp';
+    final path = await _projectService.uniquePath(basePath);
     await _projectService.saveProject(_currentProject!, _historyService, filePath: path);
     _hasUnsavedChanges = false;
     notifyListeners();
@@ -391,6 +401,106 @@ class ProjectProvider extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  // ─── Image placement ─────────────────────────────────────
+
+  String? _imagePlacingLayerId;
+  Offset _imagePlacingOffset = Offset.zero;
+  double _imagePlacingRotation = 0;
+  double _imagePlacingScale = 1.0;
+  bool _imagePlacingFlipH = false;
+  bool _imagePlacingFlipV = false;
+
+  bool get isPlacingImage => _imagePlacingLayerId != null;
+  Offset get imagePlacingOffset => _imagePlacingOffset;
+  double get imagePlacingRotation => _imagePlacingRotation;
+  double get imagePlacingScale => _imagePlacingScale;
+  bool get imagePlacingFlipH => _imagePlacingFlipH;
+  bool get imagePlacingFlipV => _imagePlacingFlipV;
+
+  Layer? get imagePlacingLayer {
+    if (_currentProject == null || _imagePlacingLayerId == null) return null;
+    for (final layer in _currentProject!.layers) {
+      if (layer.id == _imagePlacingLayerId) return layer;
+    }
+    return null;
+  }
+
+  Future<void> importImageToCanvas(String path) async {
+    if (_currentProject == null) return;
+    try {
+      final file = File(path);
+      final bytes = await file.readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final img = frame.image;
+      final name = file.uri.pathSegments.last;
+
+      // Create new layer with the image
+      final layer = Layer(
+        id: _uuid.v4(),
+        name: name,
+        image: img,
+        imagePath: path,
+        imageOffset: Offset(
+          (_currentProject!.settings.width - img.width) / 2,
+          (_currentProject!.settings.height - img.height) / 2,
+        ),
+      );
+      _currentProject!.layers.add(layer);
+      _currentProject!.currentLayerIndex = _currentProject!.layers.length - 1;
+
+      _imagePlacingLayerId = layer.id;
+      _imagePlacingOffset = layer.imageOffset;
+      _imagePlacingRotation = 0;
+      _imagePlacingScale = 1.0;
+      _imagePlacingFlipH = false;
+      _imagePlacingFlipV = false;
+
+      _hasUnsavedChanges = true;
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  void updateImagePlacement({Offset? offset, double? rotation, double? scale, bool? flipH, bool? flipV}) {
+    if (!isPlacingImage) return;
+    if (offset != null) _imagePlacingOffset = offset;
+    if (rotation != null) _imagePlacingRotation = rotation;
+    if (scale != null) _imagePlacingScale = scale;
+    if (flipH != null) _imagePlacingFlipH = flipH;
+    if (flipV != null) _imagePlacingFlipV = flipV;
+    final layer = imagePlacingLayer;
+    if (layer != null) {
+      layer.imageOffset = _imagePlacingOffset;
+      layer.imageRotation = _imagePlacingRotation;
+      layer.imageScale = _imagePlacingScale;
+    }
+    notifyListeners();
+  }
+
+  void confirmImagePlacement() {
+    if (!isPlacingImage) return;
+    final layer = imagePlacingLayer;
+    if (layer != null) {
+      layer.imageOffset = _imagePlacingOffset;
+      layer.imageRotation = _imagePlacingRotation;
+      layer.imageScale = _imagePlacingScale;
+      layer.imageFlipH = _imagePlacingFlipH;
+      layer.imageFlipV = _imagePlacingFlipV;
+    }
+    _imagePlacingLayerId = null;
+    _hasUnsavedChanges = true;
+    notifyListeners();
+  }
+
+  void cancelImagePlacement() {
+    if (!isPlacingImage) return;
+    if (_currentProject != null && _imagePlacingLayerId != null) {
+      _currentProject!.layers.removeWhere((l) => l.id == _imagePlacingLayerId);
+    }
+    _imagePlacingLayerId = null;
+    notifyListeners();
   }
 
   // ─── Workspace management ────────────────────────────────

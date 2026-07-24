@@ -518,7 +518,7 @@ class _ProjectCard extends StatefulWidget {
 }
 
 class _ProjectCardState extends State<_ProjectCard> {
-  FileImage? _thumbnailImage;
+  String? _thumbPath;
 
   @override
   void initState() {
@@ -526,12 +526,29 @@ class _ProjectCardState extends State<_ProjectCard> {
     _loadThumbnail();
   }
 
+  @override
+  void didUpdateWidget(_ProjectCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _loadThumbnail();
+  }
+
   void _loadThumbnail() {
     if (widget.project.filePath == null) return;
     final thumbFile = File('${widget.project.filePath}.thumb.png');
-    if (thumbFile.existsSync()) {
-      _thumbnailImage = FileImage(thumbFile);
+    if (thumbFile.existsSync() && mounted) {
+      setState(() => _thumbPath = thumbFile.path);
+    } else {
+      _thumbPath = null;
     }
+  }
+
+  Widget _thumbPlaceholder(ThemeData theme) {
+    return Container(
+      color: theme.colorScheme.surfaceContainerHigh,
+      child: Center(
+        child: Icon(Icons.image_outlined, size: 48, color: theme.colorScheme.onSurfaceVariant),
+      ),
+    );
   }
 
   void _showReplay(BuildContext context) async {
@@ -574,16 +591,10 @@ class _ProjectCardState extends State<_ProjectCard> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    if (_thumbnailImage != null)
-                      Image(image: _thumbnailImage!, fit: BoxFit.cover, width: double.infinity, height: double.infinity)
+                    if (_thumbPath != null)
+                      Image.file(File(_thumbPath!), fit: BoxFit.cover, width: double.infinity, height: double.infinity, errorBuilder: (_, _, _) => _thumbPlaceholder(theme))
                     else
-                      Container(
-                        color: theme.colorScheme.surfaceContainerHigh,
-                        child: Center(
-                          child: Icon(Icons.image_outlined,
-                              size: 48, color: theme.colorScheme.onSurfaceVariant),
-                        ),
-                      ),
+                      _thumbPlaceholder(theme),
                     if (widget.showCheckbox)
                       Positioned(
                         left: 4,
@@ -663,23 +674,56 @@ class _ReplayDialog extends StatefulWidget {
 
 class _ReplayDialogState extends State<_ReplayDialog> {
   int _visibleCount = 0;
-  late Timer _timer;
+  bool _paused = false;
+  double _speed = 1.0;
+  Timer? _timer;
+
+  static const List<double> _speeds = [0.5, 1.0, 2.0, 4.0];
 
   @override
   void initState() {
     super.initState();
+    _startTimer();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
     _timer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
-      if (_visibleCount < widget.drawables.length) {
-        setState(() => _visibleCount++);
+      if (_paused) return;
+      final increment = _speed;
+      setState(() {
+        _visibleCount = (_visibleCount + increment).floor();
+        if (_visibleCount >= widget.drawables.length) {
+          _visibleCount = widget.drawables.length;
+          timer.cancel();
+        }
+      });
+    });
+  }
+
+  void _togglePause() {
+    setState(() {
+      _paused = !_paused;
+      if (_paused) {
+        _timer?.cancel();
       } else {
-        timer.cancel();
+        _startTimer();
+      }
+    });
+  }
+
+  void _seekTo(double value) {
+    setState(() {
+      _visibleCount = value.round();
+      if (_visibleCount < widget.drawables.length && _timer == null) {
+        _startTimer();
       }
     });
   }
 
   @override
   void dispose() {
-    _timer.cancel();
+    _timer?.cancel();
     super.dispose();
   }
 
@@ -692,10 +736,11 @@ class _ReplayDialogState extends State<_ReplayDialog> {
     final scale = (available / w).clamp(0.1, 1.0);
     final dw = w * scale;
     final dh = h * scale;
+    final total = widget.drawables.length;
 
     return Dialog(
       child: Padding(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -717,12 +762,47 @@ class _ReplayDialogState extends State<_ReplayDialog> {
               ),
             ),
             const SizedBox(height: 8),
-            Text('$_visibleCount / ${widget.drawables.length}'),
-            if (_visibleCount >= widget.drawables.length)
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text('dialog.close'.tr()),
-              ),
+            // Progress bar
+            Slider(
+              value: _visibleCount.clamp(0, total).toDouble(),
+              min: 0,
+              max: total > 0 ? total.toDouble() : 1,
+              onChanged: _seekTo,
+            ),
+            // Controls row
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Speed buttons
+                ..._speeds.map((s) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: ChoiceChip(
+                    label: Text('${s}x', style: const TextStyle(fontSize: 11)),
+                    selected: _speed == s,
+                    onSelected: (v) {
+                      setState(() => _speed = s);
+                      if (_timer == null && !_paused) _startTimer();
+                    },
+                    visualDensity: VisualDensity.compact,
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                  ),
+                )),
+                const SizedBox(width: 12),
+                // Pause/Play
+                IconButton(
+                  icon: Icon(_paused ? Icons.play_arrow : Icons.pause, size: 24),
+                  onPressed: _togglePause,
+                ),
+                const SizedBox(width: 8),
+                Text('$_visibleCount / $total', style: theme.textTheme.bodySmall),
+              ],
+            ),
+            const SizedBox(height: 4),
+            // Close button
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('dialog.close'.tr()),
+            ),
           ],
         ),
       ),

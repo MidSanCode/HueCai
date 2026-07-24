@@ -5,8 +5,10 @@ import 'dart:ui' as ui;
 import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 import '../models/project.dart';
 import '../models/layer.dart';
+import '../models/drawable.dart';
 import '../models/canvas_settings.dart';
 import 'history_service.dart';
 
@@ -235,8 +237,8 @@ class ProjectService {
     HistoryService history, {
     String? filePath,
   }) async {
-    final path = filePath ?? project.filePath;
-    final savePath = path ?? '${await _projectsDir}/${project.name}$_hcpExtension';
+    final path = filePath ?? project.filePath ?? await uniquePath('${await _projectsDir}/${project.name}$_hcpExtension');
+    final savePath = path;
 
     final archive = Archive();
 
@@ -332,6 +334,19 @@ class ProjectService {
     }
   }
 
+  Future<String> uniquePath(String basePath) async {
+    final file = File(basePath);
+    if (!await file.exists()) return basePath;
+    final dir = file.parent;
+    final name = file.uri.pathSegments.last.replaceAll('.hcp', '');
+    int counter = 1;
+    while (true) {
+      final newPath = '${dir.path}/$name($counter).hcp';
+      if (!await File(newPath).exists()) return newPath;
+      counter++;
+    }
+  }
+
   Future<Uint8List?> _layerToPng(Layer layer, int canvasW, int canvasH) async {
     try {
       final recorder = ui.PictureRecorder();
@@ -372,16 +387,34 @@ class ProjectService {
       iccProfileData: iccProfileData,
     );
 
+    final bgId = const Uuid().v4();
     final project = Project(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       name: name,
       settings: settings,
       layers: [
         Layer(
-          id: 'layer_0',
+          id: bgId,
           name: 'Background',
+          locked: true,
+          drawables: [
+            Drawable(
+              id: '${bgId}_bg',
+              isShape: true,
+              shapeType: ShapeType.rect,
+              points: [Offset.zero, Offset(width.toDouble(), height.toDouble())],
+              color: Colors.white,
+              isFilled: true,
+              strokeWidth: 0,
+            ),
+          ],
+        ),
+        Layer(
+          id: const Uuid().v4(),
+          name: 'Layer 1',
         ),
       ],
+      currentLayerIndex: 1,
       createdAt: DateTime.now(),
       modifiedAt: DateTime.now(),
     );

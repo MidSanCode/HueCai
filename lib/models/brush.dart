@@ -31,16 +31,16 @@ class Brush {
   });
 
   static List<Brush> defaults() => [
-        Brush(type: BrushType.hardRound, nameKey: 'brush.hard_round', size: 10, hardness: 1.0),
-        Brush(type: BrushType.softRound, nameKey: 'brush.soft_round', size: 20, hardness: 0.0),
-        Brush(type: BrushType.pencil, nameKey: 'brush.pencil', size: 3, hardness: 1.0, spacing: 0.05),
-        Brush(type: BrushType.marker, nameKey: 'brush.marker', size: 15, hardness: 0.8, opacity: 0.8),
-        Brush(type: BrushType.airbrush, nameKey: 'brush.airbrush', size: 30, hardness: 0.0, opacity: 0.3, flow: 0.5),
-        Brush(type: BrushType.watercolor, nameKey: 'brush.watercolor', size: 25, hardness: 0.2, opacity: 0.5, flow: 0.6, spacing: 0.15),
-        Brush(type: BrushType.oil, nameKey: 'brush.oil', size: 20, hardness: 0.6, opacity: 0.9, spacing: 0.2),
-        Brush(type: BrushType.crayon, nameKey: 'brush.crayon', size: 12, hardness: 0.7, spacing: 0.25),
-        Brush(type: BrushType.charcoal, nameKey: 'brush.charcoal', size: 15, hardness: 0.3, spacing: 0.2),
-        Brush(type: BrushType.calligraphy, nameKey: 'brush.calligraphy', size: 15, hardness: 0.9, spacing: 0.1),
+        Brush(type: BrushType.hardRound, nameKey: 'brush.hard_round', size: 5, hardness: 1.0),
+        Brush(type: BrushType.softRound, nameKey: 'brush.soft_round', size: 10, hardness: 0.0),
+        Brush(type: BrushType.pencil, nameKey: 'brush.pencil', size: 2, hardness: 1.0, spacing: 0.05),
+        Brush(type: BrushType.marker, nameKey: 'brush.marker', size: 8, hardness: 0.8, opacity: 0.8),
+        Brush(type: BrushType.airbrush, nameKey: 'brush.airbrush', size: 15, hardness: 0.0, opacity: 0.3, flow: 0.5),
+        Brush(type: BrushType.watercolor, nameKey: 'brush.watercolor', size: 12, hardness: 0.2, opacity: 0.5, flow: 0.6, spacing: 0.15),
+        Brush(type: BrushType.oil, nameKey: 'brush.oil', size: 10, hardness: 0.6, opacity: 0.9, spacing: 0.2),
+        Brush(type: BrushType.crayon, nameKey: 'brush.crayon', size: 6, hardness: 0.7, spacing: 0.25),
+        Brush(type: BrushType.charcoal, nameKey: 'brush.charcoal', size: 8, hardness: 0.3, spacing: 0.2),
+        Brush(type: BrushType.calligraphy, nameKey: 'brush.calligraphy', size: 8, hardness: 0.9, spacing: 0.1),
       ];
 
   Brush copyWith({

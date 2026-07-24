@@ -194,6 +194,7 @@
   "layer.rename": "Rename Layer",
   "menu.tool.stabilizer": "Stabilizer",
   "menu.tool.stabilizer_hint": "Higher values produce smoother strokes",
+  "menu.image.import_image": "Import Image to Canvas",
   "menu.image.import_reference": "Import Reference",
   "menu.image.clear_reference": "Clear Reference",
   "settings.stabilizer": "Stabilizer",
@@ -216,5 +217,11 @@
   "workspace.trash": "Trash",
   "workspace.empty_trash": "Empty Trash",
   "workspace.trash_empty": "Trash is empty",
-  "workspace.restore": "Restore"
+  "workspace.restore": "Restore",
+  "brush.pressure": "Pressure Width",
+  "brush.pressure_unavailable": "Pressure not detected — velocity will be used instead",
+  "brush.pressure_enable": "Enable Pressure Width",
+  "brush.pressure_min": "Min Pressure Scale",
+  "brush.pressure_max": "Max Pressure Scale",
+  "brush.vp_blend": "Velocity/Pressure Blend"
 }
