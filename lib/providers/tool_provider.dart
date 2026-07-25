@@ -13,6 +13,11 @@ enum ToolType {
   fill,
   gradient,
   eyedropper,
+  smudge,
+  willowLeaf,
+  liquify,
+  perspectiveGuide,
+  symmetry,
 }
 
 class ToolProvider extends ChangeNotifier {
@@ -24,6 +29,8 @@ class ToolProvider extends ChangeNotifier {
   double _brushSize = 5.0;
   double _brushOpacity = 1.0;
   bool _isStandardMode = false;
+  bool _symmetryEnabled = false;
+  bool _perspectiveGuideEnabled = false;
 
   ToolType get currentTool => _currentTool;
   ShapeType get currentShape => _currentShape;
@@ -33,6 +40,8 @@ class ToolProvider extends ChangeNotifier {
   double get brushSize => _brushSize;
   double get brushOpacity => _brushOpacity;
   bool get isStandardMode => _isStandardMode;
+  bool get symmetryEnabled => _symmetryEnabled;
+  bool get perspectiveGuideEnabled => _perspectiveGuideEnabled;
 
   void setTool(ToolType tool) {
     _currentTool = tool;
@@ -97,4 +106,13 @@ class ToolProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void toggleSymmetry() {
+    _symmetryEnabled = !_symmetryEnabled;
+    notifyListeners();
+  }
+
+  void togglePerspectiveGuide() {
+    _perspectiveGuideEnabled = !_perspectiveGuideEnabled;
+    notifyListeners();
+  }
 }

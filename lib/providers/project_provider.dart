@@ -159,6 +159,10 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void refresh() {
+    notifyListeners();
+  }
+
   void setCurrentLayer(int index) {
     if (_currentProject != null && index < _currentProject!.layers.length) {
       _currentProject!.currentLayerIndex = index;

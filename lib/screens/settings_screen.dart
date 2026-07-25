@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import '../providers/app_settings.dart';
+import '../providers/tool_provider.dart';
 import '../utils/logger.dart';
 import '../services/config_service.dart';
 
@@ -202,7 +203,12 @@ class _GeneralContent extends StatelessWidget {
 
 // ─── Drawing ───────────────────────────────────────────────────
 
-class _DrawingContent extends StatelessWidget {
+class _DrawingContent extends StatefulWidget {
+  @override
+  State<_DrawingContent> createState() => _DrawingContentState();
+}
+
+class _DrawingContentState extends State<_DrawingContent> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -239,8 +245,121 @@ class _DrawingContent extends StatelessWidget {
             ),
           ),
         ]),
+        _sectionCard(theme: theme, title: 'settings.toolbar'.tr(), children: [
+          ListTile(
+            title: Text('settings.customize_toolbar'.tr()),
+            trailing: const Icon(Icons.chevron_right, size: 18),
+            onTap: () => _showToolbarEditor(context, settings),
+          ),
+        ]),
       ],
     );
+  }
+
+  void _showToolbarEditor(BuildContext context, AppSettings settings) {
+    final allTools = ToolType.values.where((t) => t != ToolType.perspectiveGuide && t != ToolType.symmetry).toList();
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) {
+          final currentTools = List<String>.from(settings.toolbarTools);
+          final available = allTools.where((t) => !currentTools.contains(t.name)).toList();
+          return AlertDialog(
+            title: Text('settings.customize_toolbar'.tr()),
+            content: SizedBox(
+              width: 300,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('settings.toolbar_visible'.tr(), style: const TextStyle(fontSize: 12)),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: ReorderableListView(
+                      shrinkWrap: true,
+                      children: List.generate(currentTools.length, (i) {
+                        final name = currentTools[i];
+                        final tool = ToolType.values.firstWhere(
+                          (t) => t.name == name,
+                          orElse: () => ToolType.brush,
+                        );
+                        return ListTile(
+                          key: ValueKey(name),
+                          leading: Icon(Icons.drag_handle, size: 18),
+                          title: Text(_toolLabel(tool), style: const TextStyle(fontSize: 13)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.remove_circle_outline, size: 18),
+                            onPressed: () {
+                              settings.removeToolbarTool(name);
+                              setState(() {});
+                            },
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                        );
+                      }),
+                      onReorderItem: (oldIndex, newIndex) {
+                        settings.moveToolbarTool(oldIndex, newIndex);
+                        setState(() {});
+                      },
+                    ),
+                  ),
+                  if (available.isNotEmpty) ...[
+                    const Divider(),
+                    Text('settings.toolbar_available'.tr(), style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      height: 120,
+                      child: ListView(
+                        children: available.map((tool) {
+                          return ListTile(
+                            leading: Icon(Icons.add_circle_outline, size: 18),
+                            title: Text(_toolLabel(tool), style: const TextStyle(fontSize: 13)),
+                            onTap: () {
+                              settings.addToolbarTool(tool.name);
+                              setState(() {});
+                            },
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: Text('dialog.close'.tr()),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  String _toolLabel(ToolType tool) {
+    switch (tool) {
+      case ToolType.move: return 'Move';
+      case ToolType.shape: return 'Shape';
+      case ToolType.pen: return 'Pen';
+      case ToolType.text: return 'Text';
+      case ToolType.select: return 'Select';
+      case ToolType.brush: return 'Brush';
+      case ToolType.eraser: return 'Eraser';
+      case ToolType.fill: return 'Fill';
+      case ToolType.gradient: return 'Gradient';
+      case ToolType.eyedropper: return 'Eyedropper';
+      case ToolType.smudge: return 'Smudge';
+      case ToolType.willowLeaf: return 'Willow Leaf';
+      case ToolType.liquify: return 'Liquify';
+      case ToolType.perspectiveGuide: return 'Perspective Guide';
+      case ToolType.symmetry: return 'Symmetry';
+    }
   }
 }
 

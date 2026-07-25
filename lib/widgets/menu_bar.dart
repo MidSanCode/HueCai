@@ -192,18 +192,26 @@ class _FullMenuBar extends StatelessWidget {
                 () => context.read<ToolProvider>().setTool(ToolType.text)),
             _MenuItem('menu.tool.select'.tr(), Icons.crop_square,
                 () => context.read<ToolProvider>().setTool(ToolType.select)),
-            const _MenuDivider(),
-            _MenuItem('menu.tool.brush'.tr(), Icons.brush,
-                () => context.read<ToolProvider>().setTool(ToolType.brush)),
-            _MenuItem('menu.tool.eraser'.tr(), Icons.auto_fix_normal,
-                () => context.read<ToolProvider>().setTool(ToolType.eraser)),
             _MenuItem('menu.tool.fill'.tr(), Icons.format_color_fill,
                 () => context.read<ToolProvider>().setTool(ToolType.fill)),
+            _MenuItem('menu.tool.gradient'.tr(), Icons.gradient,
+                () => context.read<ToolProvider>().setTool(ToolType.gradient)),
             _MenuItem('menu.tool.eyedropper'.tr(), Icons.colorize,
                 () => context.read<ToolProvider>().setTool(ToolType.eyedropper)),
             const _MenuDivider(),
+            _MenuItem('menu.tool.smudge'.tr(), Icons.blur_on,
+                () => context.read<ToolProvider>().setTool(ToolType.smudge)),
+            _MenuItem('menu.tool.willow_leaf'.tr(), Icons.eco,
+                () => context.read<ToolProvider>().setTool(ToolType.willowLeaf)),
+            _MenuItem('menu.tool.liquify'.tr(), Icons.waves,
+                () => context.read<ToolProvider>().setTool(ToolType.liquify)),
+            const _MenuDivider(),
             _MenuItem('menu.tool.stabilizer'.tr(), Icons.spa,
                 () => _showStabilizerDialog(context)),
+            _MenuItem('menu.tool.symmetry'.tr(), Icons.flip,
+                () => context.read<ToolProvider>().toggleSymmetry()),
+            _MenuItem('menu.tool.perspective'.tr(), Icons.grid_on,
+                () => context.read<ToolProvider>().togglePerspectiveGuide()),
           ]),
           _MenuButton(label: 'menu.settings'.tr(), children: [
             _MenuItem('menu.settings.brush'.tr(), Icons.brush, () {
@@ -275,6 +283,16 @@ class _CompactMenuBar extends StatelessWidget {
                   toolProvider.setTool(ToolType.fill);
                 case 'tool_eyedropper':
                   toolProvider.setTool(ToolType.eyedropper);
+                case 'tool_smudge':
+                  toolProvider.setTool(ToolType.smudge);
+                case 'tool_willow':
+                  toolProvider.setTool(ToolType.willowLeaf);
+                case 'tool_liquify':
+                  toolProvider.setTool(ToolType.liquify);
+                case 'tool_symmetry':
+                  toolProvider.toggleSymmetry();
+                case 'tool_perspective':
+                  toolProvider.togglePerspectiveGuide();
                 case 'layer_new':
                   context.read<ProjectProvider>().addLayer();
                 case 'fit':
@@ -314,8 +332,13 @@ class _CompactMenuBar extends StatelessWidget {
               _popupItem('tool_eraser', Icons.auto_fix_normal, 'menu.tool.eraser'),
               _popupItem('tool_fill', Icons.format_color_fill, 'menu.tool.fill'),
               _popupItem('tool_eyedropper', Icons.colorize, 'menu.tool.eyedropper'),
+              _popupItem('tool_smudge', Icons.blur_on, 'menu.tool.smudge'),
+              _popupItem('tool_willow', Icons.eco, 'menu.tool.willow_leaf'),
+              _popupItem('tool_liquify', Icons.waves, 'menu.tool.liquify'),
               const PopupMenuDivider(),
               _popupItem('stabilizer', Icons.spa, 'menu.tool.stabilizer'),
+              _popupItem('tool_symmetry', Icons.flip, 'menu.tool.symmetry'),
+              _popupItem('tool_perspective', Icons.grid_on, 'menu.tool.perspective'),
               _popupItem('import_ref', Icons.image, 'menu.image.import_reference'),
               const PopupMenuDivider(),
               _popupItem('fit', Icons.fit_screen, 'menu.view.fit_screen'),

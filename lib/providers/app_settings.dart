@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'tool_provider.dart';
 
 class AppSettings extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.system;
@@ -16,6 +17,10 @@ class AppSettings extends ChangeNotifier {
   double _pressureMaxScale = 1.0;
   double _velocityPressureBlend = 0.0;
   bool _hasPressure = false;
+  List<String> _toolbarTools = [
+    'brush', 'eraser', 'shape', 'select',
+    'smudge', 'willowLeaf',
+  ];
 
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
@@ -29,6 +34,13 @@ class AppSettings extends ChangeNotifier {
   double get pressureMaxScale => _pressureMaxScale;
   double get velocityPressureBlend => _velocityPressureBlend;
   bool get hasPressure => _hasPressure;
+  List<String> get toolbarTools => _toolbarTools;
+
+  List<ToolType> get toolbarToolTypes =>
+      _toolbarTools.map((s) => ToolType.values.firstWhere(
+        (t) => t.name == s,
+        orElse: () => ToolType.brush,
+      )).toList();
 
   void updatePressureCapability(bool v) {
     _hasPressure = v;
@@ -55,6 +67,9 @@ class AppSettings extends ChangeNotifier {
         _pressureMinScale = (json['pressureMinScale'] as num?)?.toDouble() ?? 0.3;
         _pressureMaxScale = (json['pressureMaxScale'] as num?)?.toDouble() ?? 1.0;
         _velocityPressureBlend = (json['velocityPressureBlend'] as num?)?.toDouble() ?? 0.0;
+        _toolbarTools = (json['toolbarTools'] as List?)
+            ?.map((e) => e as String)
+            .toList() ?? _toolbarTools;
         notifyListeners();
       }
     } catch (_) {}
@@ -76,6 +91,7 @@ class AppSettings extends ChangeNotifier {
         'pressureMinScale': _pressureMinScale,
         'pressureMaxScale': _pressureMaxScale,
         'velocityPressureBlend': _velocityPressureBlend,
+        'toolbarTools': _toolbarTools,
       }));
     } catch (_) {}
   }
@@ -106,4 +122,32 @@ class AppSettings extends ChangeNotifier {
   void setPressureMinScale(double v) { _pressureMinScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setPressureMaxScale(double v) { _pressureMaxScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setVelocityPressureBlend(double v) { _velocityPressureBlend = v.clamp(0.0, 1.0); _save(); notifyListeners(); }
+
+  void setToolbarTools(List<String> tools) {
+    _toolbarTools = tools;
+    _save();
+    notifyListeners();
+  }
+
+  void addToolbarTool(String tool) {
+    if (!_toolbarTools.contains(tool)) {
+      _toolbarTools.add(tool);
+      _save();
+      notifyListeners();
+    }
+  }
+
+  void removeToolbarTool(String tool) {
+    _toolbarTools.remove(tool);
+    _save();
+    notifyListeners();
+  }
+
+  void moveToolbarTool(int oldIndex, int newIndex) {
+    if (newIndex > oldIndex) newIndex--;
+    final item = _toolbarTools.removeAt(oldIndex);
+    _toolbarTools.insert(newIndex, item);
+    _save();
+    notifyListeners();
+  }
 }

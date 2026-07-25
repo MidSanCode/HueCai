@@ -50,6 +50,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
   Offset? _imagePlaceStartOffset;
   Offset? _imagePlaceStartPos;
 
+  // Multi-click shape state (line, curve, polygon)
+  bool _isPlacingShapePoints = false;
+
+  // Select tool rubber band
+  Offset? _selectStart;
+
   bool _isOnCanvas(Offset canvasPos) {
     return canvasPos.dx >= 0 &&
         canvasPos.dy >= 0 &&
@@ -88,6 +94,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _lastPointerPos = null;
     _smoothedWidth = 0;
 
+    // Cancel any pending multi-click shape if switching to non-shape tool
+    if (_isPlacingShapePoints && tp.currentTool != ToolType.shape) {
+      _cancelMultiClickShape();
+    }
+
     _log.info('PointerDown tool=${tp.currentTool} canvasPos=(${canvasPos.dx.toStringAsFixed(1)}, ${canvasPos.dy.toStringAsFixed(1)})');
 
     final pp = context.read<ProjectProvider>();
@@ -98,23 +109,141 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
+    if (tp.currentTool == ToolType.select) {
+      pp.saveSnapshot();
+      pp.clearSelection();
+      _selectStart = canvasPos;
+      _dragConfirmed = false;
+      return;
+    }
+
     if (tp.currentTool == ToolType.fill) {
       pp.saveSnapshot();
       final hit = _hitTest(canvasPos);
       if (hit != null) pp.toggleFillDrawable(hit, tp.primaryColor);
-    } else if (tp.currentTool == ToolType.gradient) {
-      _gradientStart = canvasPos;
-    } else if (tp.currentTool == ToolType.move) {
-      final hit = _hitTest(canvasPos);
-      if (hit != null) pp.selectDrawable(hit);
+      return;
     }
-    // Brush/eraser/shape start is deferred to _tryBeginDrag
+
+    if (tp.currentTool == ToolType.gradient) {
+      _gradientStart = canvasPos;
+      return;
+    }
+
+    // Multi-click shapes: line, polygon
+    if (tp.currentTool == ToolType.shape &&
+        (tp.currentShape == ShapeType.line ||
+         tp.currentShape == ShapeType.polygon)) {
+      // Reset if no current drawable or shape type changed
+      if (!_isPlacingShapePoints || _currentDrawable == null ||
+          _currentDrawable!.shapeType != tp.currentShape) {
+        _isPlacingShapePoints = false;
+        _currentDrawable = null;
+      }
+      pp.saveSnapshot();
+
+      if (_isPlacingShapePoints && _currentDrawable != null) {
+        // Add point to existing shape
+        _currentDrawable!.points.add(canvasPos);
+        if (tp.currentShape == ShapeType.line && _currentDrawable!.points.length >= 2) {
+          // Line: finalize after 2 clicks
+          final start = _currentDrawable!.points.first;
+          final end = _currentDrawable!.points.last;
+          _currentDrawable!.points = [start, end, Offset.lerp(start, end, 0.5)!];
+          _isPlacingShapePoints = false;
+          _currentDrawable!.selected = true;
+          _currentDrawable = null;
+        } else if (tp.currentShape == ShapeType.polygon) {
+          // Check if clicked near first point to close
+          final dist = (canvasPos - _currentDrawable!.points.first).distance;
+          if (_currentDrawable!.points.length >= 3 && dist < 15) {
+            _currentDrawable!.selected = true;
+            _isPlacingShapePoints = false;
+            _currentDrawable = null;
+          }
+        }
+        if (_currentDrawable == null) {
+          pp.refresh();
+          return;
+        }
+        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+      } else {
+        // Start new multi-click shape
+        _isPlacingShapePoints = true;
+        final drawable = Drawable(
+          id: const Uuid().v4(),
+          isShape: true,
+          shapeType: tp.currentShape,
+          points: [canvasPos],
+          color: tp.primaryColor,
+          strokeWidth: tp.brushSize,
+          isFilled: false,
+        );
+        _currentDrawable = drawable;
+        pp.addDrawable(drawable);
+        _dragConfirmed = true;
+      }
+      return;
+    }
+
+    if (tp.currentTool == ToolType.move) {
+      final hit = _hitTest(canvasPos);
+      if (hit != null) {
+        pp.selectDrawable(hit);
+      } else {
+        pp.clearSelection();
+      }
+      return;
+    }
+    // Brush/eraser/shape (rect/ellipse) start is deferred to _tryBeginDrag
   }
 
   void _tryBeginDrag(Offset pos, Size areaSize) {
     final tp = context.read<ToolProvider>();
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
+
+    if (tp.currentTool == ToolType.smudge ||
+        tp.currentTool == ToolType.willowLeaf ||
+        tp.currentTool == ToolType.liquify) {
+      if (!_isOnCanvas(canvasPos)) return;
+      pp.saveSnapshot();
+      _stabilizerQueue.clear();
+      _lastPointerTime = DateTime.now();
+      _lastPointerPos = pos;
+      final color = tp.currentTool == ToolType.smudge
+          ? tp.primaryColor.withAlpha(100)
+          : tp.primaryColor;
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        points: [canvasPos],
+        widths: [tp.brushSize],
+        color: color,
+        strokeWidth: tp.brushSize,
+        opacity: tp.brushOpacity,
+      );
+      _currentDrawable = drawable;
+      pp.addDrawable(drawable);
+      _dragConfirmed = true;
+      return;
+    }
+
+    if (tp.currentTool == ToolType.select) {
+      if (_selectStart == null) return;
+      _dragConfirmed = true;
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        isShape: true,
+        shapeType: ShapeType.rect,
+        points: [_selectStart!, canvasPos],
+        color: Colors.blue.withAlpha(60),
+        isFilled: true,
+        strokeWidth: 1,
+        opacity: 0.3,
+      );
+      _currentDrawable = drawable;
+      pp.addDrawable(drawable);
+      return;
+    }
 
     if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
       if (!_isOnCanvas(canvasPos)) return;
@@ -134,6 +263,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       pp.addDrawable(drawable);
       _dragConfirmed = true;
     } else if (tp.currentTool == ToolType.shape) {
+      _isPlacingShapePoints = false;
       pp.saveSnapshot();
       pp.clearSelection();
       final drawable = Drawable(
@@ -197,6 +327,19 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
+    // Select tool rubber band
+    if (tp.currentTool == ToolType.select && _selectStart != null) {
+      if (_currentDrawable == null) {
+        if ((pos - _downScreenPos!).distance < _dragThreshold) return;
+        _tryBeginDrag(pos, areaSize);
+      }
+      if (_currentDrawable != null) {
+        _currentDrawable!.points = [_selectStart!, canvasPos];
+        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+      }
+      return;
+    }
+
     // Brush/eraser/shape: defer start until drag threshold is met
     if (_currentDrawable == null) {
       if (_downScreenPos == null) return;
@@ -205,7 +348,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (_currentDrawable == null) return;
     }
 
-    if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
+    if (tp.currentTool == ToolType.brush ||
+        tp.currentTool == ToolType.eraser ||
+        tp.currentTool == ToolType.smudge ||
+        tp.currentTool == ToolType.willowLeaf ||
+        tp.currentTool == ToolType.liquify) {
       final as = context.read<AppSettings>();
       final now = DateTime.now();
       double widthFromVelocity = tp.brushSize;
@@ -285,9 +432,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _currentDrawable!.widths!.add(currentWidth);
     pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
     } else if (tp.currentTool == ToolType.shape) {
-      final snapped = _snapShapeEnd(tp, canvasPos);
-      _currentDrawable!.points = [_currentDrawable!.points.first, snapped];
-      pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+      if (tp.currentShape == ShapeType.curve) {
+        // Curve: accumulate all points during drag
+        _currentDrawable!.points.add(canvasPos);
+        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+      } else {
+        final snapped = _snapShapeEnd(tp, canvasPos);
+        _currentDrawable!.points = [_currentDrawable!.points.first, snapped];
+        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+      }
     }
   }
 
@@ -298,6 +451,29 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _imagePlaceStartOffset = null;
     _imagePlaceStartPos = null;
     final pp = context.read<ProjectProvider>();
+    final tp = context.read<ToolProvider>();
+
+    // Select tool: select drawables in rubber band rect
+    if (tp.currentTool == ToolType.select && _selectStart != null && _currentDrawable != null) {
+      final rect = Rect.fromPoints(_selectStart!, _currentDrawable!.points.last);
+      pp.clearSelection();
+      for (final layer in widget.project.layers) {
+        for (final d in layer.drawables) {
+          if (d.id == _currentDrawable!.id) continue;
+          if (d.bounds.overlaps(rect)) {
+            d.selected = true;
+          }
+        }
+      }
+      pp.deleteDrawable(_currentDrawable!.id);
+      _currentDrawable = null;
+      _selectStart = null;
+      _downScreenPos = null;
+      _dragConfirmed = false;
+      pp.refresh();
+      return;
+    }
+
     // If drag was never confirmed, discard the pending drawable
     if (!_dragConfirmed && _currentDrawable != null) {
       pp.deleteDrawable(_currentDrawable!.id);
@@ -311,8 +487,18 @@ class _PaintCanvasState extends State<PaintCanvas> {
     // If gradient drag was never confirmed, just discard the start point
     _currentDrawable = null;
     _gradientStart = null;
+    _selectStart = null;
     _downScreenPos = null;
     _dragConfirmed = false;
+  }
+
+  void _cancelMultiClickShape() {
+    if (_isPlacingShapePoints && _currentDrawable != null) {
+      final pp = context.read<ProjectProvider>();
+      pp.deleteDrawable(_currentDrawable!.id);
+      _currentDrawable = null;
+    }
+    _isPlacingShapePoints = false;
   }
 
   Offset _snapShapeEnd(ToolProvider tp, Offset end) {
@@ -382,7 +568,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
         tp.currentTool == ToolType.eraser ||
         tp.currentTool == ToolType.shape ||
         tp.currentTool == ToolType.gradient ||
-        tp.currentTool == ToolType.fill;
+        tp.currentTool == ToolType.fill ||
+        tp.currentTool == ToolType.select ||
+        tp.currentTool == ToolType.smudge ||
+        tp.currentTool == ToolType.willowLeaf ||
+        tp.currentTool == ToolType.liquify;
     final pw = widget.project.settings.width.toDouble();
     final ph = widget.project.settings.height.toDouble();
 

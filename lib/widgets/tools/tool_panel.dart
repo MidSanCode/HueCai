@@ -1,61 +1,147 @@
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:provider/provider.dart';
 import '../../providers/tool_provider.dart';
+import '../../providers/project_provider.dart';
+import '../../providers/app_settings.dart';
 import '../../models/drawable.dart';
 
-class ToolPanel extends StatelessWidget {
+class ToolPanel extends StatefulWidget {
   final ToolProvider toolProvider;
 
   const ToolPanel({super.key, required this.toolProvider});
 
   @override
+  State<ToolPanel> createState() => _ToolPanelState();
+}
+
+class _ToolPanelState extends State<ToolPanel> {
+  final LayerLink _layerLink = LayerLink();
+
+  static const Map<ToolType, IconData> _toolIcons = {
+    ToolType.move: Icons.open_with,
+    ToolType.shape: Icons.rectangle_outlined,
+    ToolType.pen: Icons.edit,
+    ToolType.text: Icons.text_fields,
+    ToolType.select: Icons.crop_square,
+    ToolType.brush: Icons.brush,
+    ToolType.eraser: Icons.auto_fix_normal,
+    ToolType.fill: Icons.format_color_fill,
+    ToolType.gradient: Icons.gradient,
+    ToolType.eyedropper: Icons.colorize,
+    ToolType.smudge: Icons.blur_on,
+    ToolType.willowLeaf: Icons.eco,
+    ToolType.liquify: Icons.waves,
+    ToolType.perspectiveGuide: Icons.grid_on,
+    ToolType.symmetry: Icons.flip,
+  };
+
+  static const Map<ToolType, String> _toolLabels = {
+    ToolType.move: 'tool.move',
+    ToolType.shape: 'tool.shape',
+    ToolType.pen: 'tool.pen',
+    ToolType.text: 'tool.text',
+    ToolType.select: 'tool.select',
+    ToolType.brush: 'tool.brush',
+    ToolType.eraser: 'tool.eraser',
+    ToolType.fill: 'tool.fill',
+    ToolType.gradient: 'tool.gradient',
+    ToolType.eyedropper: 'tool.eyedropper',
+    ToolType.smudge: 'tool.smudge',
+    ToolType.willowLeaf: 'tool.willow_leaf',
+    ToolType.liquify: 'tool.liquify',
+    ToolType.perspectiveGuide: 'tool.perspective_guide',
+    ToolType.symmetry: 'tool.symmetry',
+  };
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isShapeTool = toolProvider.currentTool == ToolType.shape;
-    final shapeIcon = _shapeIcon(toolProvider.currentShape);
+    final appSettings = context.watch<AppSettings>();
+    final toolTypes = appSettings.toolbarToolTypes;
+    final isSelectTool = widget.toolProvider.currentTool == ToolType.select;
+    final selectedDrawable = context.watch<ProjectProvider>().selectedDrawable;
 
-    return Container(
-      width: 48,
-      color: theme.colorScheme.surfaceContainerLow,
-      child: Column(
-        children: [
-          const SizedBox(height: 8),
-          _toolBtn(context, ToolType.move, Icons.open_with, 'tool.move'),
-          _shapeBtn(context, shapeIcon, isShapeTool),
-          _toolBtn(context, ToolType.pen, Icons.edit, 'tool.pen'),
-          _toolBtn(context, ToolType.text, Icons.text_fields, 'tool.text'),
-          _toolBtn(context, ToolType.select, Icons.crop_square, 'tool.select'),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
-            child: Divider(height: 8),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 48,
+          color: theme.colorScheme.surfaceContainerLow,
+          child: Column(
+            children: [
+              const SizedBox(height: 8),
+              ...List.generate(toolTypes.length, (i) {
+                final type = toolTypes[i];
+                if (type == ToolType.shape) {
+                  return _shapeBtn(context, isSelectTool, widget.toolProvider);
+                }
+                return _toolBtn(context, type, isSelectTool, widget.toolProvider);
+              }),
+              const SizedBox(height: 8),
+            ],
           ),
-          _toolBtn(context, ToolType.brush, Icons.brush, 'tool.brush'),
-          _toolBtn(context, ToolType.eraser, Icons.auto_fix_normal, 'tool.eraser'),
-          _toolBtn(context, ToolType.fill, Icons.format_color_fill, 'tool.fill'),
-          _toolBtn(context, ToolType.gradient, Icons.gradient, 'tool.gradient'),
-          _toolBtn(context, ToolType.eyedropper, Icons.colorize, 'tool.eyedropper'),
-          const SizedBox(height: 8),
-        ],
-      ),
+        ),
+        if (isSelectTool)
+          CompositedTransformFollower(
+            link: _layerLink,
+            targetAnchor: Alignment.topRight,
+            followerAnchor: Alignment.topLeft,
+            child: _SelectConfigMenu(
+              selectedDrawable: selectedDrawable,
+              toolProvider: widget.toolProvider,
+            ),
+          ),
+        if (isSelectTool)
+          CompositedTransformTarget(link: _layerLink, child: const SizedBox.shrink()),
+      ],
     );
   }
 
-  Widget _toolBtn(BuildContext context, ToolType type, IconData icon, String labelKey) {
+  Widget _toolBtn(BuildContext context, ToolType type, bool isSelectTool, ToolProvider tp) {
     final theme = Theme.of(context);
-    final selected = toolProvider.currentTool == type;
+    final selected = tp.currentTool == type;
+    if (type == ToolType.select) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+        child: Tooltip(
+          message: _toolLabels[type]?.tr() ?? '',
+          child: CompositedTransformTarget(
+            link: _layerLink,
+            child: Material(
+              color: selected ? theme.colorScheme.primaryContainer : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () {
+                  tp.setTool(type);
+                },
+                child: SizedBox(
+                  width: 40, height: 40,
+                  child: Icon(_toolIcons[type], size: 22,
+                    color: selected
+                        ? theme.colorScheme.onPrimaryContainer
+                        : theme.colorScheme.onSurfaceVariant),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
       child: Tooltip(
-        message: labelKey.tr(),
+        message: _toolLabels[type]?.tr() ?? '',
         child: Material(
           color: selected ? theme.colorScheme.primaryContainer : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
-            onTap: () => toolProvider.setTool(type),
+            onTap: () => tp.setTool(type),
             child: SizedBox(
               width: 40, height: 40,
-              child: Icon(icon, size: 22,
+              child: Icon(_toolIcons[type], size: 22,
                 color: selected
                     ? theme.colorScheme.onPrimaryContainer
                     : theme.colorScheme.onSurfaceVariant),
@@ -66,8 +152,10 @@ class ToolPanel extends StatelessWidget {
     );
   }
 
-  Widget _shapeBtn(BuildContext context, IconData icon, bool isShapeTool) {
+  Widget _shapeBtn(BuildContext context, bool isSelectTool, ToolProvider tp) {
     final theme = Theme.of(context);
+    final isShapeTool = tp.currentTool == ToolType.shape;
+    final shapeIcon = _shapeIcon(tp.currentShape);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
       child: Tooltip(
@@ -81,13 +169,13 @@ class ToolPanel extends StatelessWidget {
               if (isShapeTool) {
                 _showShapeMenu(context);
               } else {
-                toolProvider.setTool(ToolType.shape);
+                tp.setTool(ToolType.shape);
               }
             },
             onLongPress: () => _showShapeMenu(context),
             child: SizedBox(
               width: 40, height: 40,
-              child: Icon(icon, size: 22,
+              child: Icon(shapeIcon, size: 22,
                 color: isShapeTool
                     ? theme.colorScheme.onPrimaryContainer
                     : theme.colorScheme.onSurfaceVariant),
@@ -116,9 +204,9 @@ class ToolPanel extends StatelessWidget {
               return ListTile(
                 leading: Icon(_shapeIcon(e.key)),
                 title: Text(e.value.tr()),
-                selected: toolProvider.currentShape == e.key,
+                selected: widget.toolProvider.currentShape == e.key,
                 onTap: () {
-                  toolProvider.setShape(e.key);
+                  widget.toolProvider.setShape(e.key);
                   Navigator.of(ctx).pop();
                 },
               );
@@ -127,9 +215,9 @@ class ToolPanel extends StatelessWidget {
             SwitchListTile(
               title: Text('tool.standard_mode'.tr()),
               subtitle: Text('tool.standard_mode_hint'.tr()),
-              value: toolProvider.isStandardMode,
+              value: widget.toolProvider.isStandardMode,
               onChanged: (_) {
-                toolProvider.toggleStandardMode();
+                widget.toolProvider.toggleStandardMode();
                 setState(() {});
               },
             ),
@@ -147,5 +235,81 @@ class ToolPanel extends StatelessWidget {
       case ShapeType.line: return Icons.horizontal_rule;
       case ShapeType.curve: return Icons.timeline;
     }
+  }
+}
+
+class _SelectConfigMenu extends StatelessWidget {
+  final Drawable? selectedDrawable;
+  final ToolProvider toolProvider;
+
+  const _SelectConfigMenu({
+    required this.selectedDrawable,
+    required this.toolProvider,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasSelection = selectedDrawable != null;
+    return Material(
+      elevation: 4,
+      color: theme.colorScheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('tool.select'.tr(), style: const TextStyle(fontSize: 11)),
+            const Divider(height: 6),
+            if (hasSelection) ...[
+              SizedBox(
+                width: 36, height: 36,
+                child: IconButton(
+                  icon: const Icon(Icons.copy, size: 18),
+                  tooltip: 'menu.edit.copy'.tr(),
+                  onPressed: () {
+                    final pp = context.read<ProjectProvider>();
+                    pp.saveSnapshot();
+                    pp.selectedDrawable?.copyWith();
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ),
+              SizedBox(
+                width: 36, height: 36,
+                child: IconButton(
+                  icon: const Icon(Icons.content_cut, size: 18),
+                  tooltip: 'menu.edit.cut'.tr(),
+                  onPressed: () {
+                    final pp = context.read<ProjectProvider>();
+                    if (pp.selectedDrawable != null) {
+                      pp.saveSnapshot();
+                      pp.deleteDrawable(pp.selectedDrawable!.id);
+                    }
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ),
+              const Divider(height: 6),
+            ],
+            SizedBox(
+              width: 36, height: 36,
+              child: IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'tool.select_deselect'.tr(),
+                onPressed: () {
+                  context.read<ProjectProvider>().clearSelection();
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
