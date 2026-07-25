@@ -13,6 +13,26 @@ import '../services/history_service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 
+class ProjectStats {
+  final String createdAt;
+  int strokeCount;
+  int drawingTimeSeconds;
+  DateTime? _firstStrokeTime;
+
+  ProjectStats({
+    this.createdAt = '',
+    this.strokeCount = 0,
+    this.drawingTimeSeconds = 0,
+  });
+
+  void recordStroke() {
+    strokeCount++;
+    final now = DateTime.now();
+    _firstStrokeTime ??= now;
+    drawingTimeSeconds = now.difference(_firstStrokeTime!).inSeconds;
+  }
+}
+
 class ProjectProvider extends ChangeNotifier {
   final ProjectService _projectService = ProjectService();
   final HistoryService _historyService = HistoryService();
@@ -23,12 +43,14 @@ class ProjectProvider extends ChangeNotifier {
   bool _loading = false;
   bool _hasUnsavedChanges = false;
   Timer? _backupTimer;
+  final ProjectStats _stats = ProjectStats();
 
   Project? get currentProject => _currentProject;
   List<Project> get recentProjects => _recentProjects;
   HistoryService get history => _historyService;
   bool get loading => _loading;
   bool get hasUnsavedChanges => _hasUnsavedChanges;
+  ProjectStats get stats => _stats;
 
   void startBackupTimer() {
     _backupTimer?.cancel();
@@ -90,6 +112,9 @@ class ProjectProvider extends ChangeNotifier {
     );
     _hasUnsavedChanges = true;
     _historyService.clear();
+    _stats._firstStrokeTime = null;
+    _stats.strokeCount = 0;
+    _stats.drawingTimeSeconds = 0;
     notifyListeners();
   }
 
@@ -362,6 +387,7 @@ class ProjectProvider extends ChangeNotifier {
     final current = _currentProject!.currentLayer;
     if (current == null || current.locked) return;
     current.drawables.add(drawable);
+    _stats.recordStroke();
     _markChanged();
   }
 
