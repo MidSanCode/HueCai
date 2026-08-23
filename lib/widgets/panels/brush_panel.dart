@@ -22,26 +22,19 @@ class BrushPanel extends StatelessWidget {
               children: [
                 Text('brush.panel'.tr(), style: theme.textTheme.labelMedium),
                 const SizedBox(height: 6),
-                SizedBox(
-                  height: 32,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: Brush.defaults().length,
-                    itemBuilder: (ctx, i) {
-                      final brush = Brush.defaults()[i];
-                      final selected = provider.currentBrush.type == brush.type;
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: ChoiceChip(
-                          label: Text(brush.nameKey.tr(), style: const TextStyle(fontSize: 10)),
-                          selected: selected,
-                          onSelected: (_) => provider.setBrush(brush),
-                          visualDensity: VisualDensity.compact,
-                          labelPadding: const EdgeInsets.symmetric(horizontal: 6),
-                        ),
-                      );
-                    },
-                  ),
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: Brush.defaults().map((brush) {
+                    final selected = provider.currentBrush.type == brush.type;
+                    return ChoiceChip(
+                      label: Text(brush.nameKey.tr(), style: const TextStyle(fontSize: 10)),
+                      selected: selected,
+                      onSelected: (_) => provider.setBrush(brush),
+                      visualDensity: VisualDensity.compact,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                    );
+                  }).toList(),
                 ),
                 const SizedBox(height: 6),
                 _sliderRow('brush.size'.tr(), provider.brushSize, 1, 200,

@@ -25,23 +25,44 @@ class ToolProvider extends ChangeNotifier {
   ShapeType _currentShape = ShapeType.rect;
   Color _primaryColor = Colors.black;
   Color _secondaryColor = Colors.white;
+  Color _gradientStartColor = Colors.black;
+  Color _gradientEndColor = Colors.blue;
   Brush _currentBrush = Brush.defaults().first;
   double _brushSize = 5.0;
   double _brushOpacity = 1.0;
   bool _isStandardMode = false;
   bool _symmetryEnabled = false;
   bool _perspectiveGuideEnabled = false;
+  final List<Color> _memoryColors = List.filled(20, Colors.transparent);
 
   ToolType get currentTool => _currentTool;
   ShapeType get currentShape => _currentShape;
   Color get primaryColor => _primaryColor;
   Color get secondaryColor => _secondaryColor;
+  Color get gradientStartColor => _gradientStartColor;
+  Color get gradientEndColor => _gradientEndColor;
   Brush get currentBrush => _currentBrush;
+  BrushType get brushType => _currentBrush.type;
   double get brushSize => _brushSize;
   double get brushOpacity => _brushOpacity;
   bool get isStandardMode => _isStandardMode;
   bool get symmetryEnabled => _symmetryEnabled;
   bool get perspectiveGuideEnabled => _perspectiveGuideEnabled;
+  List<Color> get memoryColors => _memoryColors;
+
+  void addMemoryColor(Color c) {
+    _memoryColors.remove(c);
+    _memoryColors.insert(0, c);
+    if (_memoryColors.length > 20) _memoryColors.removeLast();
+    notifyListeners();
+  }
+
+  void clearMemoryColor(int index) {
+    if (index >= 0 && index < _memoryColors.length) {
+      _memoryColors[index] = Colors.transparent;
+      notifyListeners();
+    }
+  }
 
   void setTool(ToolType tool) {
     _currentTool = tool;
@@ -80,6 +101,16 @@ class ToolProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setGradientStartColor(Color color) {
+    _gradientStartColor = color;
+    notifyListeners();
+  }
+
+  void setGradientEndColor(Color color) {
+    _gradientEndColor = color;
+    notifyListeners();
+  }
+
   void swapColors() {
     final temp = _primaryColor;
     _primaryColor = _secondaryColor;
@@ -91,6 +122,11 @@ class ToolProvider extends ChangeNotifier {
     _currentBrush = brush;
     _brushSize = brush.size;
     _brushOpacity = brush.opacity;
+    notifyListeners();
+  }
+
+  void setBrushType(BrushType type) {
+    _currentBrush = _currentBrush.copyWith(type: type);
     notifyListeners();
   }
 

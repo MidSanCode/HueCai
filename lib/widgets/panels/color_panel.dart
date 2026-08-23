@@ -5,15 +5,22 @@ import '../../providers/tool_provider.dart';
 
 class ColorPanel extends StatefulWidget {
   final ToolProvider toolProvider;
-  const ColorPanel({super.key, required this.toolProvider});
+  /// When provided, picked colors are routed here instead of the primary color.
+  final ValueChanged<Color>? onPick;
+  /// The color shown as active on the wheel when [onPick] is used.
+  final Color? currentColor;
+  const ColorPanel({
+    super.key,
+    required this.toolProvider,
+    this.onPick,
+    this.currentColor,
+  });
 
   @override
   State<ColorPanel> createState() => _ColorPanelState();
 }
 
 class _ColorPanelState extends State<ColorPanel> {
-  final List<Color> _memoryColors = List.filled(20, Colors.transparent);
-
   static const List<Color> _defaultColors = [
     Color(0xFF000000), Color(0xFFFFFFFF), Color(0xFFE53935),
     Color(0xFF2196F3), Color(0xFF4CAF50), Color(0xFFFFEB3B),
@@ -21,17 +28,20 @@ class _ColorPanelState extends State<ColorPanel> {
     Color(0xFF795548),
   ];
 
-  void _addMemory(Color c) {
-    _memoryColors.remove(c);
-    _memoryColors.insert(0, c);
-    if (_memoryColors.length > 20) _memoryColors.removeLast();
-    setState(() {});
+  void _apply(Color c) {
+    if (widget.onPick != null) {
+      widget.onPick!(c);
+      return;
+    }
+    widget.toolProvider.setPrimaryColor(c);
+    widget.toolProvider.addMemoryColor(c);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tp = widget.toolProvider;
+    final activeColor = widget.currentColor ?? tp.primaryColor;
     return Card(
       margin: const EdgeInsets.all(8),
       child: Padding(
@@ -42,24 +52,27 @@ class _ColorPanelState extends State<ColorPanel> {
             SizedBox(
               width: 140, height: 140,
               child: _ColorWheel(
-                selectedColor: tp.primaryColor,
-                onChanged: (c) {
-                  tp.setPrimaryColor(c);
-                  _addMemory(c);
-                },
+                selectedColor: activeColor,
+                onChanged: _apply,
               ),
             ),
             const SizedBox(height: 8),
-            _colorRow(theme, _defaultColors, tp, isDefault: true),
+            _colorRow(theme, _defaultColors, tp, activeColor, isDefault: true),
             const SizedBox(height: 4),
-            _colorRow(theme, _memoryColors, tp),
+            _colorRow(theme, tp.memoryColors, tp, activeColor),
           ],
         ),
       ),
     );
   }
 
-  Widget _colorRow(ThemeData theme, List<Color> colors, ToolProvider tp, {bool isDefault = false}) {
+  Widget _colorRow(
+    ThemeData theme,
+    List<Color> colors,
+    ToolProvider tp,
+    Color activeColor, {
+    bool isDefault = false,
+  }) {
     return Wrap(
       spacing: 2, runSpacing: 2,
       children: List.generate(colors.length, (i) {
@@ -68,12 +81,9 @@ class _ColorPanelState extends State<ColorPanel> {
           return const SizedBox(width: 14, height: 14);
         }
         return GestureDetector(
-          onTap: () {
-            tp.setPrimaryColor(c);
-            if (!isDefault) _addMemory(c);
-          },
+          onTap: () => _apply(c),
           onSecondaryTap: !isDefault
-              ? () => setState(() => _memoryColors[i] = Colors.transparent)
+              ? () => tp.clearMemoryColor(i)
               : null,
           child: Container(
             width: 14, height: 14,
@@ -81,10 +91,10 @@ class _ColorPanelState extends State<ColorPanel> {
               color: c,
               borderRadius: BorderRadius.circular(3),
               border: Border.all(
-                color: c == tp.primaryColor
+                color: c == activeColor
                     ? theme.colorScheme.primary
                     : Colors.grey.shade400,
-                width: c == tp.primaryColor ? 2 : 0.5,
+                width: c == activeColor ? 2 : 0.5,
               ),
             ),
           ),

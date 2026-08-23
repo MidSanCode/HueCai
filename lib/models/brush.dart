@@ -9,6 +9,7 @@ enum BrushType {
   crayon,
   charcoal,
   calligraphy,
+  eraser,
 }
 
 class Brush {
@@ -41,6 +42,7 @@ class Brush {
         Brush(type: BrushType.crayon, nameKey: 'brush.crayon', size: 6, hardness: 0.7, spacing: 0.25),
         Brush(type: BrushType.charcoal, nameKey: 'brush.charcoal', size: 8, hardness: 0.3, spacing: 0.2),
         Brush(type: BrushType.calligraphy, nameKey: 'brush.calligraphy', size: 8, hardness: 0.9, spacing: 0.1),
+        Brush(type: BrushType.eraser, nameKey: 'brush.eraser', size: 10, hardness: 1.0),
       ];
 
   Brush copyWith({

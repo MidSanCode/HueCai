@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
 import '../../providers/tool_provider.dart';
+import '../../providers/project_provider.dart';
 import '../../providers/app_settings.dart';
 import '../../models/drawable.dart';
+import '../../models/brush.dart';
 import '../panels/color_panel.dart';
 
 class ToolPanel extends StatefulWidget {
@@ -60,7 +62,7 @@ class _ToolPanelState extends State<ToolPanel> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final tp = widget.toolProvider;
+    final tp = context.watch<ToolProvider>();
 
     List<ToolType> toolTypes;
     if (widget.portrait) {
@@ -81,12 +83,18 @@ class _ToolPanelState extends State<ToolPanel> {
             if (type == ToolType.shape) return _shapeBtn(context, tp);
             return _toolBtn(context, type, tp);
           }),
+          if (tp.currentTool == ToolType.gradient) ...[
+            const SizedBox(height: 4),
+            _gradientControls(context),
+            const SizedBox(height: 4),
+          ],
           if (widget.portrait) ...[
             const SizedBox(height: 4),
             _brushControls(context),
             const SizedBox(height: 4),
             _colorPanelTrigger(context),
           ],
+          // Selection panel is now shown via SelectionPanel widget
           const SizedBox(height: 8),
         ],
       ),
@@ -96,6 +104,7 @@ class _ToolPanelState extends State<ToolPanel> {
   Widget _toolBtn(BuildContext context, ToolType type, ToolProvider tp) {
     final theme = Theme.of(context);
     final selected = tp.currentTool == type;
+    final isBrushLike = type == ToolType.brush || type == ToolType.eraser || type == ToolType.smudge;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
       child: Tooltip(
@@ -105,7 +114,17 @@ class _ToolPanelState extends State<ToolPanel> {
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
-            onTap: () => tp.setTool(type),
+            onTap: () {
+              if (isBrushLike && selected) {
+                _showBrushMenu(context, tp);
+              } else {
+                tp.setTool(type);
+                if (type == ToolType.select) {
+                  // Enter marquee mode right away with a fresh selection.
+                  context.read<ProjectProvider>().enterSelectionMode();
+                }
+              }
+            },
             child: SizedBox(
               width: 40, height: 40,
               child: Icon(_toolIcons[type], size: 22,
@@ -116,6 +135,91 @@ class _ToolPanelState extends State<ToolPanel> {
           ),
         ),
       ),
+    );
+  }
+
+  void _showBrushMenu(BuildContext context, ToolProvider tp) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('brush.panel'.tr(), style: Theme.of(ctx).textTheme.labelMedium),
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: Brush.defaults().map((brush) {
+                    final selected = tp.brushType == brush.type;
+                    return FilterChip(
+                      label: Text(brush.nameKey.tr(), style: const TextStyle(fontSize: 10)),
+                      selected: selected,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) {
+                        tp.setBrushType(brush.type);
+                        Navigator.of(ctx).pop();
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _gradientControls(BuildContext context) {
+    final tp = widget.toolProvider;
+    final theme = Theme.of(context);
+    void pick(bool start) {
+      showModalBottomSheet(
+        context: context,
+        builder: (ctx) => ColorPanel(
+          toolProvider: tp,
+          currentColor: start ? tp.gradientStartColor : tp.gradientEndColor,
+          onPick: (c) {
+            if (start) {
+              tp.setGradientStartColor(c);
+            } else {
+              tp.setGradientEndColor(c);
+            }
+          },
+        ),
+      );
+    }
+
+    Widget swatch(Color c, VoidCallback onTap, String tip) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 1, horizontal: 4),
+          child: Tooltip(
+            message: tip,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                width: 32,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: c,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: theme.colorScheme.outline, width: 1),
+                ),
+              ),
+            ),
+          ),
+        );
+
+    return Column(
+      children: [
+        swatch(tp.gradientStartColor, () => pick(true), 'tool.gradient_start'.tr()),
+        const Icon(Icons.arrow_downward, size: 12),
+        swatch(tp.gradientEndColor, () => pick(false), 'tool.gradient_end'.tr()),
+      ],
     );
   }
 
