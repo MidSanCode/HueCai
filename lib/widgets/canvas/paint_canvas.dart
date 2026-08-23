@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../../models/project.dart';
 import '../../models/drawable.dart';
+import '../../models/selection_data.dart';
 import '../../providers/tool_provider.dart';
 import '../../providers/canvas_provider.dart';
 import '../../providers/project_provider.dart';
@@ -29,6 +30,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
   // Gesture debounce
   Offset? _downScreenPos;
+  Offset? _downCanvasPos;
   bool _dragConfirmed = false;
   bool _isScaling = false;
   DateTime? _scaleEndTime;
@@ -53,8 +55,149 @@ class _PaintCanvasState extends State<PaintCanvas> {
   // Multi-click shape state (line, curve, polygon)
   bool _isPlacingShapePoints = false;
 
-  // Select tool rubber band
+  // Select tool state
   Offset? _selectStart;
+  List<Offset> _lassoPoints = [];
+  Offset? _brushSelLast;
+  int? _warpDragIndex;
+  Offset? _editMoveStart;
+
+  Future<void> _onMagicWandTap(Offset canvasPos, ProjectProvider pp) async {
+    final snap = pp.canvasSnapshot;
+    if (snap == null) return;
+    final byteData = await snap.toByteData();
+    if (byteData == null) return;
+    final bytes = byteData.buffer.asUint8List();
+    try {
+      final mask = SelectionMask(snap.width, snap.height);
+      mask.floodFill(canvasPos, bytes, 30, true);
+      pp.applySelectionShape(mask, pp.selectionAddMode);
+    } catch (_) {}
+  }
+
+  bool _handleEditHitTest(Offset canvasPos, ProjectProvider pp) {
+    final bounds = pp.selectionClipBounds;
+    if (bounds.width <= 0 || bounds.height <= 0) return false;
+    if (pp.transformMode == TransformMode.scale) {
+      final handles = _getScaleHandles(bounds);
+      for (int i = 0; i < handles.length; i++) {
+        if ((canvasPos - handles[i]).distance < 10) {
+          _warpDragIndex = i;
+          _selectStart = canvasPos;
+          return true;
+        }
+      }
+    } else {
+      final grid = _getWarpGrid(bounds, pp.editScaleX, pp.editScaleY);
+      for (int i = 0; i < grid.length; i++) {
+        if ((canvasPos - grid[i]).distance < 12) {
+          _warpDragIndex = i;
+          _selectStart = canvasPos;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  void _onStartEditTransform(Offset canvasPos) {
+    _warpDragIndex = null;
+    _selectStart = canvasPos;
+    _editMoveStart = canvasPos;
+  }
+
+  void _onEditMove(Offset canvasPos, ProjectProvider pp) {
+    if (_warpDragIndex != null) {
+      final bounds = pp.selectionClipBounds;
+      final sx = pp.editScaleX;
+      final sy = pp.editScaleY;
+      final grid = _getWarpGrid(bounds, sx, sy);
+      if (_warpDragIndex! < grid.length) {
+        final delta = canvasPos - _selectStart!;
+        _selectStart = canvasPos;
+        // For scale mode handles, map delta to scale
+        if (pp.transformMode == TransformMode.scale) {
+          final idx = _warpDragIndex!;
+          double newSx = sx, newSy = sy;
+          // Corner handles
+          if (idx == 0) { // top-left
+            newSx = (bounds.width + delta.dx) / bounds.width;
+            newSy = (bounds.height + delta.dy) / bounds.height;
+          } else if (idx == 2) { // top-right
+            newSx = (bounds.width - delta.dx) / bounds.width;
+            newSy = (bounds.height + delta.dy) / bounds.height;
+          } else if (idx == 5) { // bottom-left
+            newSx = (bounds.width + delta.dx) / bounds.width;
+            newSy = (bounds.height - delta.dy) / bounds.height;
+          } else if (idx == 7) { // bottom-right
+            newSx = (bounds.width - delta.dx) / bounds.width;
+            newSy = (bounds.height - delta.dy) / bounds.height;
+          }
+          pp.updateSelectionEditTransform(scaleX: newSx * sx, scaleY: newSy * sy);
+        }
+      }
+    } else if (_editMoveStart != null) {
+      final delta = canvasPos - _selectStart!;
+      _selectStart = canvasPos;
+      pp.updateSelectionEditTransform(
+        translate: pp.editTranslate + delta,
+      );
+    }
+  }
+
+  List<Offset> _getScaleHandles(Rect bounds) {
+    return [
+      bounds.topLeft, bounds.topCenter, bounds.topRight,
+      bounds.centerLeft, bounds.centerRight,
+      bounds.bottomLeft, bounds.bottomCenter, bounds.bottomRight,
+    ];
+  }
+
+  List<Offset> _getWarpGrid(Rect bounds, double sx, double sy) {
+    final pts = <Offset>[];
+    for (int row = 0; row < 3; row++) {
+      for (int col = 0; col < 3; col++) {
+        final t = col / 2;
+        final u = row / 2;
+        pts.add(Offset(
+          bounds.left + t * bounds.width * sx,
+          bounds.top + u * bounds.height * sy,
+        ));
+      }
+    }
+    return pts;
+  }
+
+  void _captureSmudgeSource() {
+    final pp = context.read<ProjectProvider>();
+    if (_currentDrawable == null || !_currentDrawable!.isSmudge) return;
+    final pw = widget.project.settings.width.toInt();
+    final ph = widget.project.settings.height.toInt();
+    if (pw <= 0 || ph <= 0) return;
+    final recorder = ui.PictureRecorder();
+    final offscreenCanvas = Canvas(recorder, Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()));
+    for (final layer in widget.project.layers) {
+      if (!layer.visible) continue;
+      for (final d in layer.drawables) {
+        if (d.id == _currentDrawable!.id) continue;
+        d.draw(offscreenCanvas, Paint());
+      }
+    }
+    final picture = recorder.endRecording();
+    picture.toImage(pw, ph).then((img) async {
+      if (_currentDrawable != null && _currentDrawable!.isSmudge) {
+        final data = await img.toByteData();
+        if (data != null) {
+          _currentDrawable!
+            ..smudgeSource = img
+            ..smudgePixels = data.buffer.asUint8List()
+            ..smudgeW = pw
+            ..smudgeH = ph;
+          pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+        }
+      }
+    });
+  }
 
   bool _isOnCanvas(Offset canvasPos) {
     return canvasPos.dx >= 0 &&
@@ -78,7 +221,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     return Offset(rx / cp.scale + w, ry / cp.scale + h);
   }
 
-  void _onPointerDown(Offset pos, Size areaSize) {
+  Future<void> _onPointerDown(Offset pos, Size areaSize) async {
     final tp = context.read<ToolProvider>();
 
     // Ignore single-finger down if we were just scaling
@@ -89,6 +232,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
     final canvasPos = _toCanvas(pos, areaSize);
     _downScreenPos = pos;
+    _downCanvasPos = canvasPos;
     _dragConfirmed = false;
     _lastPointerTime = null;
     _lastPointerPos = null;
@@ -110,9 +254,28 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
 
     if (tp.currentTool == ToolType.select) {
-      pp.saveSnapshot();
-      pp.clearSelection();
+      if (pp.selectionPhase == SelectionPhase.editing) {
+        // In edit mode, check for transform handle hit
+        if (_handleEditHitTest(canvasPos, pp)) return;
+        _onStartEditTransform(canvasPos);
+        return;
+      }
+      if (pp.selectionMethod == SelectionMethod.magicWand) {
+        // Wand samples the rasterized canvas, so the snapshot must exist.
+        if (pp.selectionPhase == SelectionPhase.none) {
+          await pp.beginSelection();
+        }
+        await _onMagicWandTap(canvasPos, pp);
+        return;
+      }
+      // Other methods work on the mask directly; beginSelection registers
+      // the mask synchronously, so don't block the gesture on the snapshot.
+      if (pp.selectionPhase == SelectionPhase.none) {
+        pp.beginSelection();
+      }
       _selectStart = canvasPos;
+      _lassoPoints = [canvasPos];
+      _brushSelLast = null;
       _dragConfirmed = false;
       return;
     }
@@ -197,29 +360,70 @@ class _PaintCanvasState extends State<PaintCanvas> {
     // Brush/eraser/shape (rect/ellipse) start is deferred to _tryBeginDrag
   }
 
-  void _tryBeginDrag(Offset pos, Size areaSize) {
+  void _tryBeginDrag(Offset pos, Size areaSize, {Offset? canvasStart}) {
     final tp = context.read<ToolProvider>();
     final pp = context.read<ProjectProvider>();
-    final canvasPos = _toCanvas(pos, areaSize);
+    final canvasPos = canvasStart ?? _toCanvas(pos, areaSize);
 
-    if (tp.currentTool == ToolType.smudge ||
-        tp.currentTool == ToolType.willowLeaf ||
-        tp.currentTool == ToolType.liquify) {
+    if (tp.currentTool == ToolType.smudge) {
       if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
       _stabilizerQueue.clear();
       _lastPointerTime = DateTime.now();
       _lastPointerPos = pos;
-      final color = tp.currentTool == ToolType.smudge
-          ? tp.primaryColor.withAlpha(100)
-          : tp.primaryColor;
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
         widths: [tp.brushSize],
-        color: color,
+        color: tp.primaryColor,
         strokeWidth: tp.brushSize,
         opacity: tp.brushOpacity,
+        isSmudge: true,
+        brushType: tp.brushType,
+      );
+      _currentDrawable = drawable;
+      pp.addDrawable(drawable);
+      _dragConfirmed = true;
+      _captureSmudgeSource();
+      return;
+    }
+
+    if (tp.currentTool == ToolType.willowLeaf) {
+      if (!_isOnCanvas(canvasPos)) return;
+      pp.saveSnapshot();
+      _stabilizerQueue.clear();
+      _lastPointerTime = DateTime.now();
+      _lastPointerPos = pos;
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        points: [canvasPos],
+        widths: [tp.brushSize],
+        color: tp.primaryColor,
+        strokeWidth: tp.brushSize,
+        opacity: tp.brushOpacity,
+        leaves: <LeafData>[],
+        brushType: tp.brushType,
+      );
+      _currentDrawable = drawable;
+      pp.addDrawable(drawable);
+      _dragConfirmed = true;
+      return;
+    }
+
+    if (tp.currentTool == ToolType.liquify) {
+      if (!_isOnCanvas(canvasPos)) return;
+      pp.saveSnapshot();
+      _stabilizerQueue.clear();
+      _lastPointerTime = DateTime.now();
+      _lastPointerPos = pos;
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        points: [canvasPos],
+        widths: [tp.brushSize],
+        color: tp.primaryColor.withAlpha(80),
+        strokeWidth: tp.brushSize,
+        opacity: tp.brushOpacity,
+        brushType: tp.brushType,
       );
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
@@ -230,10 +434,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
     if (tp.currentTool == ToolType.select) {
       if (_selectStart == null) return;
       _dragConfirmed = true;
+      if (pp.selectionMethod == SelectionMethod.lasso) {
+        // Will accumulate points in _onPointerMove
+        return;
+      }
+      // Rect or ellipse: show rubber band
       final drawable = Drawable(
         id: const Uuid().v4(),
         isShape: true,
-        shapeType: ShapeType.rect,
+        shapeType: pp.selectionMethod == SelectionMethod.ellipse ? ShapeType.ellipse : ShapeType.rect,
         points: [_selectStart!, canvasPos],
         color: Colors.blue.withAlpha(60),
         isFilled: true,
@@ -258,6 +467,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         color: tp.currentTool == ToolType.eraser ? Colors.white : tp.primaryColor,
         strokeWidth: tp.brushSize,
         opacity: tp.brushOpacity,
+        brushType: tp.brushType,
       );
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
@@ -302,24 +512,24 @@ class _PaintCanvasState extends State<PaintCanvas> {
         _dragConfirmed = true;
       }
       pp.clearSelection();
-      final angle = atan2(canvasPos.dy - _gradientStart!.dy, canvasPos.dx - _gradientStart!.dx) * 180 / pi;
-      final drawable = Drawable(
-        id: const Uuid().v4(),
-        isShape: true,
-        shapeType: ShapeType.rect,
-        points: [_gradientStart!, canvasPos],
-        color: tp.primaryColor,
-        isFilled: true,
-        isGradient: true,
-        gradientStops: [
-          GradientStop(position: 0, color: tp.primaryColor),
-          GradientStop(position: 1, color: tp.secondaryColor),
-        ],
-        gradientAngle: angle,
-      );
       if (_currentDrawable != null) {
+        // Keep both endpoints tracking the pointer while dragging.
+        _currentDrawable!.points = [_gradientStart!, canvasPos];
         pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
       } else {
+        final drawable = Drawable(
+          id: const Uuid().v4(),
+          isShape: true,
+          shapeType: ShapeType.rect,
+          points: [_gradientStart!, canvasPos],
+          color: tp.gradientStartColor,
+          isFilled: true,
+          isGradient: true,
+          gradientStops: [
+            GradientStop(position: 0, color: tp.gradientStartColor),
+            GradientStop(position: 1, color: tp.gradientEndColor),
+          ],
+        );
         pp.saveSnapshot();
         pp.addDrawable(drawable);
         _currentDrawable = drawable;
@@ -327,8 +537,38 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
-    // Select tool rubber band
+    // Select tool: lasso / rect / ellipse / brush
     if (tp.currentTool == ToolType.select && _selectStart != null) {
+      if (pp.selectionPhase == SelectionPhase.editing) {
+        _onEditMove(canvasPos, pp);
+        return;
+      }
+      if (pp.selectionMethod == SelectionMethod.brush) {
+        // Paint brush on selection mask, interpolating between stamps so
+        // fast strokes stay connected.
+        final bs = tp.brushSize;
+        final radius = bs * 0.5;
+        final mask = SelectionMask(widget.project.settings.width.toInt(), widget.project.settings.height.toInt());
+        final from = _brushSelLast ?? canvasPos;
+        final dist = (canvasPos - from).distance;
+        final step = (radius * 0.5).clamp(2.0, 12.0);
+        final steps = (dist / step).ceil().clamp(1, 512);
+        for (int i = 1; i <= steps; i++) {
+          mask.fillCircle(Offset.lerp(from, canvasPos, i / steps)!, radius, true);
+        }
+        pp.applySelectionShape(mask, pp.selectionAddMode);
+        _brushSelLast = canvasPos;
+        return;
+      }
+      if (pp.selectionMethod == SelectionMethod.lasso) {
+        if (_dragConfirmed || (pos - _downScreenPos!).distance >= _dragThreshold) {
+          _dragConfirmed = true;
+          _lassoPoints.add(canvasPos);
+          pp.refresh(); // repaint for live marching-ants preview
+        }
+        return;
+      }
+      // Rect or ellipse rubber band
       if (_currentDrawable == null) {
         if ((pos - _downScreenPos!).distance < _dragThreshold) return;
         _tryBeginDrag(pos, areaSize);
@@ -344,7 +584,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
     if (_currentDrawable == null) {
       if (_downScreenPos == null) return;
       if ((pos - _downScreenPos!).distance < _dragThreshold) return;
-      _tryBeginDrag(pos, areaSize);
+      // Begin the stroke at the true pen-down position so the mark lands
+      // exactly under the pointer instead of jumping to the threshold point.
+      _tryBeginDrag(pos, areaSize, canvasStart: _downCanvasPos);
       if (_currentDrawable == null) return;
     }
 
@@ -358,15 +600,16 @@ class _PaintCanvasState extends State<PaintCanvas> {
       double widthFromVelocity = tp.brushSize;
       double widthFromPressure = tp.brushSize;
 
-      // Velocity-based width
+      // Velocity-based width: fast strokes get thinner, slow strokes thicker.
       if (as.velocityWidthEnabled && _lastPointerTime != null && _lastPointerPos != null) {
-        final dt = now.difference(_lastPointerTime!).inMilliseconds / 1000.0;
+        final dt = now.difference(_lastPointerTime!).inMicroseconds / 1e6;
         final dist = (pos - _lastPointerPos!).distance;
-        if (dt > 0) {
-          const double maxVel = 8000;
-          const double minVel = 200;
+        if (dt > 0.002) {
+          const double minVel = 250; // at or below this speed → thickest
+          const double maxVel = 4500; // at or above this speed → thinnest
           final velocity = (dist / dt).clamp(minVel, maxVel);
-          final ratio = (velocity - minVel) / (maxVel - minVel);
+          var ratio = (velocity - minVel) / (maxVel - minVel);
+          ratio = pow(ratio, 0.65).toDouble(); // thin out sooner for perceptual response
           final range = as.velocityMaxScale - as.velocityMinScale;
           final scale = as.velocityMaxScale - ratio * range;
           widthFromVelocity = tp.brushSize * scale;
@@ -413,7 +656,6 @@ class _PaintCanvasState extends State<PaintCanvas> {
         drawPos = canvasPos;
       }
     _currentDrawable!.widths ??= [];
-    // Interpolate intermediate points for smooth high-speed turns
     if (_currentDrawable!.points.isNotEmpty) {
       final lastPt = _currentDrawable!.points.last;
       final dist = (drawPos - lastPt).distance;
@@ -453,21 +695,37 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.read<ProjectProvider>();
     final tp = context.read<ToolProvider>();
 
-    // Select tool: select drawables in rubber band rect
-    if (tp.currentTool == ToolType.select && _selectStart != null && _currentDrawable != null) {
-      final rect = Rect.fromPoints(_selectStart!, _currentDrawable!.points.last);
-      pp.clearSelection();
-      for (final layer in widget.project.layers) {
-        for (final d in layer.drawables) {
-          if (d.id == _currentDrawable!.id) continue;
-          if (d.bounds.overlaps(rect)) {
-            d.selected = true;
+    // Select tool: apply selection
+    if (tp.currentTool == ToolType.select && _selectStart != null) {
+      if (pp.selectionPhase == SelectionPhase.editing) {
+        _warpDragIndex = null;
+        _editMoveStart = null;
+      } else if (pp.selectionMethod == SelectionMethod.lasso && _lassoPoints.length >= 3) {
+        // Close lasso and fill mask
+        final w = widget.project.settings.width.toInt();
+        final h = widget.project.settings.height.toInt();
+        final mask = SelectionMask(w, h);
+        mask.fillPolygon(_lassoPoints, true);
+        pp.applySelectionShape(mask, pp.selectionAddMode);
+      } else if (_currentDrawable != null && (_currentDrawable!.isShape || pp.selectionMethod != SelectionMethod.lasso)) {
+        if (pp.selectionMethod == SelectionMethod.rect || pp.selectionMethod == SelectionMethod.ellipse) {
+          final rect = Rect.fromPoints(_selectStart!, _currentDrawable!.points.last);
+          final w = widget.project.settings.width.toInt();
+          final h = widget.project.settings.height.toInt();
+          final mask = SelectionMask(w, h);
+          if (pp.selectionMethod == SelectionMethod.ellipse) {
+            mask.fillEllipse(rect, true);
+          } else {
+            mask.fillRect(rect, true);
           }
+          pp.applySelectionShape(mask, pp.selectionAddMode);
         }
+        pp.deleteDrawable(_currentDrawable!.id);
       }
-      pp.deleteDrawable(_currentDrawable!.id);
       _currentDrawable = null;
       _selectStart = null;
+      _lassoPoints = [];
+      _brushSelLast = null;
       _downScreenPos = null;
       _dragConfirmed = false;
       pp.refresh();
@@ -489,6 +747,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _gradientStart = null;
     _selectStart = null;
     _downScreenPos = null;
+    _downCanvasPos = null;
     _dragConfirmed = false;
   }
 
@@ -548,7 +807,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         now.difference(_lastMultiTouchTime!) < const Duration(milliseconds: 400) &&
         _lastTouchCount == count) {
       final pp = context.read<ProjectProvider>();
-      if (count == 2) pp.undo();
+      if (count == 2) pp.smartUndo();
       if (count >= 3) pp.redo();
       _lastMultiTouchTime = null;
     } else {
@@ -585,10 +844,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
           },
           onPointerDown: (event) {
             _currentPressure = event.pressure;
-            // Check if device supports pressure
-            if (event.pressureMax > 0) {
-              context.read<AppSettings>().updatePressureCapability(true);
-            }
+            // Only a real stylus reports meaningful pressure; mouse/touch
+            // pressure is constant and would cancel velocity dynamics.
+            final isStylus = event.kind == PointerDeviceKind.stylus ||
+                event.kind == PointerDeviceKind.invertedStylus;
+            context.read<AppSettings>().updatePressureCapability(
+                isStylus && event.pressureMax > 0);
           },
           onPointerSignal: (event) {
             if (event is PointerScrollEvent) {
@@ -644,7 +905,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
                 _isScaling = false;
                 _scaleEndTime = DateTime.now();
               }
-              if (_currentDrawable != null || _gradientStart != null) {
+              // Finalize select-tool gestures too: lasso/wand never create a
+              // drawable, so they previously skipped pointer-up entirely.
+              final wasSelecting = context.read<ToolProvider>().currentTool ==
+                      ToolType.select &&
+                  _selectStart != null;
+              if (_currentDrawable != null ||
+                  _gradientStart != null ||
+                  wasSelecting) {
                 _onPointerUp();
               }
             },
@@ -667,9 +935,25 @@ class _PaintCanvasState extends State<PaintCanvas> {
                         painter: _CanvasPainter(
                           project: widget.project,
                           currentDrawable: _currentDrawable,
-                          referenceImage: cp.referenceImage,
-                          referenceOpacity: cp.referenceOpacity,
-                          showReference: cp.showReference,
+                          selectionMaskImage: pp.selectionMaskImage,
+                          selectionClipImage: pp.selectionClipImage,
+                          selectionClipBounds: pp.selectionClipBounds,
+                          selectionOutlinePath: pp.selectionOutlinePath,
+                          selectionSolidImage: pp.selectionSolidImage,
+                          selectionCutout: pp.selectionCutout,
+                          liveLassoPoints:
+                              tp.currentTool == ToolType.select &&
+                                      pp.selectionMethod == SelectionMethod.lasso
+                                  ? _lassoPoints
+                                  : const [],
+                          selectionPhase: pp.selectionPhase,
+                          viewScale: cp.scale,
+                          transformMode: pp.transformMode,
+                          editScaleX: pp.editScaleX,
+                          editScaleY: pp.editScaleY,
+                          editRotate: pp.editRotate,
+                          editTranslate: pp.editTranslate,
+                          hasActiveSelection: pp.hasActiveSelection,
                         ),
                         child: SizedBox(width: pw, height: ph),
                     ),
@@ -700,42 +984,55 @@ class _BackgroundPainter extends CustomPainter {
 class _CanvasPainter extends CustomPainter {
   final Project project;
   final Drawable? currentDrawable;
-  final ui.Image? referenceImage;
-  final double referenceOpacity;
-  final bool showReference;
+  final ui.Image? selectionMaskImage;
+  final ui.Image? selectionClipImage;
+  final Rect selectionClipBounds;
+  final ui.Path? selectionOutlinePath;
+  final ui.Image? selectionSolidImage;
+  final bool selectionCutout;
+  final List<Offset> liveLassoPoints;
+  final SelectionPhase selectionPhase;
+  final TransformMode transformMode;
+  final double editScaleX, editScaleY, editRotate;
+  final Offset editTranslate;
+  final bool hasActiveSelection;
+  final double viewScale;
 
   _CanvasPainter({
     required this.project,
     this.currentDrawable,
-    this.referenceImage,
-    this.referenceOpacity = 0.5,
-    this.showReference = false,
+    this.selectionMaskImage,
+    this.selectionClipImage,
+    this.selectionClipBounds = Rect.zero,
+    this.selectionOutlinePath,
+    this.selectionSolidImage,
+    this.selectionCutout = false,
+    this.liveLassoPoints = const [],
+    this.selectionPhase = SelectionPhase.none,
+    this.transformMode = TransformMode.scale,
+    this.editScaleX = 1, this.editScaleY = 1,
+    this.editRotate = 0,
+    this.editTranslate = Offset.zero,
+    this.hasActiveSelection = false,
+    this.viewScale = 1.0,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
-    canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final pw = project.settings.width.toDouble();
+    final ph = project.settings.height.toDouble();
+    final docRect = Rect.fromLTWH(0, 0, pw, ph);
+    // Everything (strokes, previews, overlays) is hard-clipped to the
+    // document rectangle: the workspace background can never be painted on.
+    canvas.clipRect(docRect);
 
-    if (showReference && referenceImage != null) {
-      final img = referenceImage!;
-      final scale = min(size.width / img.width, size.height / img.height);
-      final dx = (size.width - img.width * scale) / 2;
-      final dy = (size.height - img.height * scale) / 2;
-      canvas.save();
-      canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
-      canvas.drawImageRect(
-        img,
-        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
-        Rect.fromLTWH(dx, dy, img.width * scale, img.height * scale),
-        Paint()..color = Colors.white.withAlpha((referenceOpacity * 255).round()),
-      );
-      canvas.restore();
-    }
+    // Document background color. Layers themselves stay transparent.
+    canvas.drawRect(docRect, Paint()
+      ..color = Color(project.settings.backgroundColor));
 
     for (final layer in project.layers) {
       if (!layer.visible) continue;
-      // Draw image if present
       if (layer.image != null) {
         final img = layer.image!;
         canvas.save();
@@ -763,7 +1060,127 @@ class _CanvasPainter extends CustomPainter {
     if (currentDrawable != null) {
       currentDrawable!.draw(canvas, Paint());
     }
+
+    // Selection overlay
+    if (hasActiveSelection && selectionMaskImage != null) {
+      canvas.drawImage(selectionMaskImage!, Offset.zero, Paint());
+    }
+
+    // Marching ants along the actual selection contour (PS style).
+    final ws = 1.0 / viewScale;
+    if (hasActiveSelection && selectionOutlinePath != null) {
+      canvas.drawPath(selectionOutlinePath!, Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2 * ws);
+      _drawDashedPath(canvas, selectionOutlinePath!, Paint()
+        ..color = Colors.black
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = ws,
+        dashLen: 5 * ws, gapLen: 4 * ws);
+    }
+
+    // Live lasso feedback while dragging.
+    if (liveLassoPoints.length >= 2) {
+      final live = ui.Path()
+        ..moveTo(liveLassoPoints.first.dx, liveLassoPoints.first.dy);
+      for (final p in liveLassoPoints.skip(1)) {
+        live.lineTo(p.dx, p.dy);
+      }
+      live.close();
+      canvas.drawPath(live, Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5 * ws);
+      _drawDashedPath(canvas, live, Paint()
+        ..color = Colors.black
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.75 * ws,
+        dashLen: 5 * ws, gapLen: 4 * ws);
+    }
+
+    // Edit mode: draw transformed clip image
+    final clipBounds = selectionClipBounds;
+    if (selectionPhase == SelectionPhase.editing && selectionClipImage != null && clipBounds.width > 0 && clipBounds.height > 0) {
+      // After a cut, erase the original region so the floating clip
+      // visibly moves away from empty space.
+      if (selectionCutout && selectionSolidImage != null) {
+        canvas.drawImage(selectionSolidImage!, Offset.zero, Paint()
+          ..blendMode = BlendMode.dstOut);
+      }
+      canvas.save();
+      final b = selectionClipBounds;
+      canvas.translate(b.center.dx + editTranslate.dx, b.center.dy + editTranslate.dy);
+      canvas.rotate(editRotate);
+      canvas.scale(editScaleX, editScaleY);
+      canvas.translate(-b.center.dx, -b.center.dy);
+      canvas.drawImage(selectionClipImage!, b.topLeft, Paint());
+      canvas.restore();
+
+      // Draw transform handles
+      if (transformMode == TransformMode.scale) {
+        _drawScaleHandles(canvas);
+      } else {
+        _drawWarpHandles(canvas);
+      }
+    }
+
     canvas.restore();
+  }
+
+  void _drawScaleHandles(Canvas canvas) {
+    if (selectionClipBounds.width <= 0 || selectionClipBounds.height <= 0) return;
+    final b = selectionClipBounds;
+    final cx = b.center.dx + editTranslate.dx;
+    final cy = b.center.dy + editTranslate.dy;
+    final hw = b.width / 2 * editScaleX;
+    final hh = b.height / 2 * editScaleY;
+    final rect = Rect.fromCenter(center: Offset(cx, cy), width: hw * 2, height: hh * 2);
+    final paint = Paint()..color = Colors.blue..style = PaintingStyle.stroke..strokeWidth = 1.5;
+    canvas.drawRect(rect, paint);
+    final corners = [
+      rect.topLeft, rect.topCenter, rect.topRight,
+      rect.centerLeft, rect.centerRight,
+      rect.bottomLeft, rect.bottomCenter, rect.bottomRight,
+    ];
+    for (final p in corners) {
+      canvas.drawCircle(p, 5, Paint()..color = Colors.white);
+      canvas.drawCircle(p, 5, Paint()..color = Colors.blue..style = PaintingStyle.stroke..strokeWidth = 1.5);
+    }
+  }
+
+  void _drawWarpHandles(Canvas canvas) {
+    if (selectionClipBounds.width <= 0 || selectionClipBounds.height <= 0) return;
+    final b = selectionClipBounds;
+    final cx = b.center.dx + editTranslate.dx;
+    final cy = b.center.dy + editTranslate.dy;
+    final hw = b.width / 2 * editScaleX;
+    final hh = b.height / 2 * editScaleY;
+    final left = cx - hw, top = cy - hh, right = cx + hw, bottom = cy + hh;
+    final paint = Paint()..color = Colors.teal..style = PaintingStyle.stroke..strokeWidth = 1;
+    final lines = <Offset>[];
+    for (int r = 0; r < 3; r++) {
+      for (int c = 0; c < 3; c++) {
+        final x = left + c * (right - left) / 2;
+        final y = top + r * (bottom - top) / 2;
+        lines.add(Offset(x, y));
+      }
+    }
+    // Draw grid lines
+    for (int r = 0; r < 3; r++) {
+      for (int c = 0; c < 2; c++) {
+        canvas.drawLine(lines[r * 3 + c], lines[r * 3 + c + 1], paint);
+      }
+    }
+    for (int c = 0; c < 3; c++) {
+      for (int r = 0; r < 2; r++) {
+        canvas.drawLine(lines[r * 3 + c], lines[(r + 1) * 3 + c], paint);
+      }
+    }
+    for (final p in lines) {
+      canvas.drawCircle(p, 5, Paint()..color = Colors.teal);
+      canvas.drawCircle(p, 5, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 1.5);
+    }
   }
 
   void _drawSelectionHandles(Canvas canvas, Drawable d) {
@@ -784,6 +1201,22 @@ class _CanvasPainter extends CustomPainter {
         ..color = Colors.blue
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5);
+    }
+  }
+
+  void _drawDashedPath(Canvas canvas, ui.Path path, Paint paint,
+      {double dashLen = 6, double gapLen = 4}) {
+    for (final metric in path.computeMetrics()) {
+      double dist = 0;
+      bool dash = true;
+      while (dist < metric.length) {
+        final end = (dist + (dash ? dashLen : gapLen)).clamp(0.0, metric.length);
+        if (dash) {
+          canvas.drawPath(metric.extractPath(dist, end), paint);
+        }
+        dist = end;
+        dash = !dash;
+      }
     }
   }
 
