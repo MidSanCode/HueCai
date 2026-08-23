@@ -123,6 +123,8 @@ class _FullMenuBar extends StatelessWidget {
                   .showSnackBar(SnackBar(content: Text('Not yet implemented')));
             }),
             const _MenuDivider(),
+            _MenuItem('menu.image.background_color'.tr(), Icons.format_color_fill,
+                () => _showBackgroundColorDialog(context)),
             _MenuItem('menu.image.import_image'.tr(), Icons.add_photo_alternate,
                 () => _importImageToCanvas(context)),
             _MenuItem('menu.image.import_reference'.tr(), Icons.image,
@@ -309,6 +311,8 @@ class _CompactMenuBar extends StatelessWidget {
                   _showStabilizerDialog(context);
                 case 'import_ref':
                   _importReference(context);
+                case 'bg_color':
+                  _showBackgroundColorDialog(context);
                 case 'brush_settings':
                   BrushEditorDialog.show(context);
                 case 'open_settings':
@@ -340,6 +344,7 @@ class _CompactMenuBar extends StatelessWidget {
               _popupItem('tool_symmetry', Icons.flip, 'menu.tool.symmetry'),
               _popupItem('tool_perspective', Icons.grid_on, 'menu.tool.perspective'),
               _popupItem('import_ref', Icons.image, 'menu.image.import_reference'),
+              _popupItem('bg_color', Icons.format_color_fill, 'menu.image.background_color'),
               const PopupMenuDivider(),
               _popupItem('fit', Icons.fit_screen, 'menu.view.fit_screen'),
               const PopupMenuDivider(),
@@ -490,6 +495,49 @@ void _showStabilizerDialog(BuildContext context) {
           ),
         ],
       ),
+    ),
+  );
+}
+
+void _showBackgroundColorDialog(BuildContext context) {
+  final pp = context.read<ProjectProvider>();
+  const presets = [
+    Color(0xFFFFFFFF), Color(0xFF000000), Color(0xFFF5F5F5), Color(0xFF2D2D2D),
+    Color(0xFFE53935), Color(0xFFFFB300), Color(0xFF43A047), Color(0xFF1E88E5),
+    Color(0xFF8E24AA), Color(0xFF00897B), Color(0xFF6D4C41), Color(0xFFEC407A),
+  ];
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('menu.image.background_color'.tr()),
+      content: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final c in presets)
+            GestureDetector(
+              onTap: () {
+                pp.setCanvasBackgroundColor(c);
+                Navigator.of(ctx).pop();
+              },
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: c,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.grey.shade400),
+                ),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: Text('dialog.cancel'.tr()),
+        ),
+      ],
     ),
   );
 }

@@ -91,6 +91,8 @@
   "tool.eraser": "Eraser",
   "tool.fill": "Fill",
   "tool.gradient": "Gradient",
+  "tool.gradient_start": "Start color",
+  "tool.gradient_end": "End color",
   "tool.eyedropper": "Eyedropper",
   "tool.smudge": "Smudge",
   "tool.willow_leaf": "Willow Leaf",
@@ -215,6 +217,7 @@
   "menu.tool.stabilizer_hint": "Higher values produce smoother strokes",
   "menu.image.import_image": "Import Image to Canvas",
   "menu.image.import_reference": "Import Reference",
+  "menu.image.background_color": "Background Color",
   "menu.image.clear_reference": "Clear Reference",
   "settings.stabilizer": "Stabilizer",
   "dialog.close": "Close",
@@ -243,4 +246,8 @@
   "brush.pressure_min": "Min Pressure Scale",
   "brush.pressure_max": "Max Pressure Scale",
   "brush.vp_blend": "Velocity/Pressure Blend"
+,
+  "menu.menu": "Menu",
+  "selection.lock_aspect": "Lock aspect",
+  "selection.new_layer": "New layer"
 }
