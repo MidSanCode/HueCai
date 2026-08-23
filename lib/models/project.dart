@@ -4,7 +4,7 @@ import 'layer.dart';
 class Project {
   final String id;
   String name;
-  final CanvasSettings settings;
+  CanvasSettings settings;
   List<Layer> layers;
   final DateTime createdAt;
   DateTime modifiedAt;

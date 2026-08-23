@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -8,6 +9,7 @@ import '../models/project.dart';
 import '../models/canvas_settings.dart';
 import '../models/layer.dart';
 import '../models/drawable.dart';
+import '../models/selection_data.dart';
 import '../services/project_service.dart';
 import '../services/history_service.dart';
 import 'package:path_provider/path_provider.dart';
@@ -431,6 +433,398 @@ class ProjectProvider extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  // ─── Clipboard ───────────────────────────────────────────
+
+  Drawable? _clipboard;
+
+  Drawable? get clipboard => _clipboard;
+
+  void setClipboard(Drawable? drawable) {
+    _clipboard = drawable;
+    notifyListeners();
+  }
+
+  void pasteClipboard() {
+    if (_clipboard == null || _currentProject == null) return;
+    final current = _currentProject!.currentLayer;
+    if (current == null || current.locked) return;
+    saveSnapshot();
+    final pasted = _clipboard!.copyWith(
+      id: _uuid.v4(),
+      points: _clipboard!.points.map((p) => p + const Offset(20, 20)).toList(),
+      selected: true,
+    );
+    current.drawables.add(pasted);
+    _markChanged();
+  }
+
+  // ─── Selection system ────────────────────────────────────
+
+  SelectionPhase _selectionPhase = SelectionPhase.none;
+  SelectionMethod _selectionMethod = SelectionMethod.rect;
+  bool _selectionAddMode = true;
+
+  /// True while an editing preview should punch a hole where pixels were
+  /// cut, so the floating clip visibly moves away from empty space.
+  bool _selectionCutout = false;
+
+  /// Fully opaque mask image used to erase the cut region (dstOut).
+  ui.Image? _selectionSolidImage;
+  SelectionMask? _selectionMask;
+  ui.Image? _canvasSnapshot;
+  ui.Image? _selectionMaskImage;
+  ui.Image? _selectionClipImage;
+  Rect _selectionClipBounds = Rect.zero;
+
+  /// Bounding box of the current selection mask, used to draw the dashed
+  /// outline around the selected region.
+  ui.Path? _selectionOutlinePath;
+  TransformMode _transformMode = TransformMode.scale;
+  bool _aspectRatioLocked = true;
+  double _editScaleX = 1, _editScaleY = 1;
+  double _editRotate = 0;
+  Offset _editTranslate = Offset.zero;
+
+  SelectionPhase get selectionPhase => _selectionPhase;
+  SelectionMethod get selectionMethod => _selectionMethod;
+  bool get selectionAddMode => _selectionAddMode;
+  bool get selectionCutout => _selectionCutout;
+  ui.Image? get selectionSolidImage => _selectionSolidImage;
+  SelectionMask? get selectionMask => _selectionMask;
+  ui.Image? get canvasSnapshot => _canvasSnapshot;
+  ui.Image? get selectionMaskImage => _selectionMaskImage;
+  ui.Image? get selectionClipImage => _selectionClipImage;
+  Rect get selectionClipBounds => _selectionClipBounds;
+
+  ui.Path? get selectionOutlinePath => _selectionOutlinePath;
+  TransformMode get transformMode => _transformMode;
+  bool get aspectRatioLocked => _aspectRatioLocked;
+  double get editScaleX => _editScaleX;
+  double get editScaleY => _editScaleY;
+  double get editRotate => _editRotate;
+  Offset get editTranslate => _editTranslate;
+  bool get hasActiveSelection => _selectionMask != null && !_selectionMask!.isEmpty;
+
+  void setSelectionMethod(SelectionMethod m) {
+    _selectionMethod = m;
+    notifyListeners();
+  }
+
+  void setSelectionAddMode(bool v) {
+    _selectionAddMode = v;
+    notifyListeners();
+  }
+
+  void setTransformMode(TransformMode m) {
+    _transformMode = m;
+    notifyListeners();
+  }
+
+  void setAspectRatioLocked(bool v) {
+    _aspectRatioLocked = v;
+    notifyListeners();
+  }
+
+  void _regenerateMaskImage() {
+    if (_selectionMask == null) {
+      _selectionMaskImage = null;
+      _selectionSolidImage = null;
+      _selectionOutlinePath = null;
+      return;
+    }
+    // Build marching-ants contour paths from the mask boundary.
+    final path = ui.Path();
+    for (final loop in _selectionMask!.contours()) {
+      if (loop.isEmpty) continue;
+      path.moveTo(loop.first.dx, loop.first.dy);
+      for (int i = 1; i < loop.length; i++) {
+        path.lineTo(loop[i].dx, loop[i].dy);
+      }
+      path.close();
+    }
+    _selectionOutlinePath = path;
+    _selectionMask!.toRgbaImage().then((img) {
+      _selectionMaskImage = img;
+      notifyListeners();
+    });
+    _selectionMask!.toRgbaImage(alphaDivisor: 1).then((img) {
+      _selectionSolidImage = img;
+      notifyListeners();
+    });
+  }
+
+  Future<void> beginSelection() async {
+    if (_currentProject == null) return;
+    _selectionPhase = SelectionPhase.selecting;
+    _selectionCutout = false;
+    _selectionMask = SelectionMask(
+      _currentProject!.settings.width.toInt(),
+      _currentProject!.settings.height.toInt(),
+    );
+    try {
+      _canvasSnapshot = await rasterizeCanvas();
+    } catch (_) {
+      _canvasSnapshot = null;
+    }
+    _regenerateMaskImage();
+    notifyListeners();
+  }
+
+  void applySelectionShape(SelectionMask shape, bool add) {
+    if (_selectionMask == null) return;
+    if (_selectionMask!.isEmpty && !add) {
+      // Nothing selected yet: a fresh drag always starts a new selection
+      // (PS-like), even when the add/subtract toggle is on subtract.
+      _selectionMask!.applyMask(shape, true);
+    } else {
+      _selectionMask!.applyMask(shape, add);
+    }
+    _regenerateMaskImage();
+    notifyListeners();
+  }
+
+  void invertSelection() {
+    if (_selectionMask == null) return;
+    _selectionMask!.invert();
+    _regenerateMaskImage();
+    notifyListeners();
+  }
+
+  void clearPixelSelection() {
+    if (_selectionMask != null) _selectionMask!.clear();
+    _selectionPhase = SelectionPhase.none;
+    _selectionMaskImage = null;
+    _selectionClipImage = null;
+    _selectionClipBounds = Rect.zero;
+    _selectionOutlinePath = null;
+    _selectionSolidImage = null;
+    _selectionCutout = false;
+    _editScaleX = _editScaleY = 1;
+    _editRotate = 0;
+    _editTranslate = Offset.zero;
+    notifyListeners();
+  }
+
+  void confirmSelection() {
+    _selectionPhase = SelectionPhase.selected;
+    notifyListeners();
+  }
+
+  Color? get canvasBackgroundColor {
+    final p = _currentProject;
+    if (p == null) return null;
+    return Color(p.settings.backgroundColor);
+  }
+
+  void setCanvasBackgroundColor(Color c) {
+    final p = _currentProject;
+    if (p == null) return;
+    p.settings = p.settings.copyWith(backgroundColor: c.toARGB32());
+    _hasUnsavedChanges = true;
+    notifyListeners();
+  }
+
+  /// Activates marquee selection mode: resets to rect method and starts a
+  /// fresh selection session so the panel is ready immediately.
+  void enterSelectionMode() {    _selectionMethod = SelectionMethod.rect;
+    if (_selectionPhase == SelectionPhase.none ||
+        _selectionPhase == SelectionPhase.selecting) {
+      beginSelection();
+    }
+    notifyListeners();
+  }
+
+  /// Undo that first cancels an active editing preview.
+  void smartUndo() {
+    if (_selectionPhase == SelectionPhase.editing) {
+      cancelSelectionEdit();
+      return;
+    }
+    undo();
+  }
+
+  Future<void> copySelection() async {
+    if (!hasActiveSelection || _canvasSnapshot == null) return;
+    _selectionCutout = false;
+    final mask = _selectionMask!;
+    final bounds = mask.bounds;
+    if (bounds.isEmpty) return;
+    _selectionClipBounds = bounds;
+    final src = _canvasSnapshot!;
+    final w = bounds.width.ceil().clamp(1, src.width);
+    final h = bounds.height.ceil().clamp(1, src.height);
+    final bd = await src.toByteData();
+    final srcBytes = bd?.buffer.asUint8List() ?? Uint8List(0);
+    final dest = Uint8List(w * h * 4);
+    if (srcBytes.isNotEmpty) {
+      for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+          final sx = (bounds.left + x).round().clamp(0, src.width - 1);
+          final sy = (bounds.top + y).round().clamp(0, src.height - 1);
+          final si = (sy * src.width + sx) * 4;
+          final di = (y * w + x) * 4;
+          final mi = sy * mask.width + sx;
+          if (mask.data[mi] != 0) {
+            dest[di] = srcBytes[si];
+            dest[di + 1] = srcBytes[si + 1];
+            dest[di + 2] = srcBytes[si + 2];
+            dest[di + 3] = srcBytes[si + 3];
+          } else {
+            dest[di + 3] = 0;
+          }
+        }
+      }
+    }
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(dest, w, h, ui.PixelFormat.rgba8888, completer.complete);
+    _selectionClipImage = await completer.future;
+    _selectionPhase = SelectionPhase.editing;
+    _editScaleX = _editScaleY = 1;
+    _editRotate = 0;
+    _editTranslate = Offset.zero;
+    notifyListeners();
+  }
+
+  Future<void> cutSelection() async {
+    if (!hasActiveSelection || _canvasSnapshot == null || _currentProject == null) return;
+    await copySelection();
+    _selectionCutout = true;
+    // Clear selected pixels from canvas snapshot
+    final mask = _selectionMask!;
+    final src = _canvasSnapshot!;
+    final bd = await src.toByteData();
+    if (bd == null) return;
+    final bytes = bd.buffer.asUint8List();
+    for (int i = 0; i < mask.data.length && i * 4 + 3 < bytes.length; i++) {
+      if (mask.data[i] != 0) {
+        bytes[i * 4 + 3] = 0;
+      }
+    }
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(bytes, src.width, src.height, ui.PixelFormat.rgba8888, completer.complete);
+    _canvasSnapshot = await completer.future;
+    notifyListeners();
+  }
+
+  Future<void> applySelectionEdit() async {
+    if (_selectionClipImage == null || _currentProject == null) return;
+    saveSnapshot();
+    final w = _currentProject!.settings.width.toInt();
+    final h = _currentProject!.settings.height.toInt();
+    final recorder = ui.PictureRecorder();
+    final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+    // Base: freshly rasterized layers (never a stale snapshot).
+    final base = await rasterizeCanvas();
+    if (_selectionCutout && _selectionSolidImage != null) {
+      // Cut: erase the original region, leaving only the moved clip.
+      c.drawImage(base, Offset.zero, Paint());
+      c.drawImage(_selectionSolidImage!, Offset.zero, Paint()
+        ..blendMode = BlendMode.dstOut);
+    } else {
+      // Copy: keep the original in place under the moved clip.
+      c.drawImage(base, Offset.zero, Paint());
+    }
+    // Composite transformed clip image
+    c.save();
+    final bounds = _selectionClipBounds;
+    c.translate(
+      bounds.center.dx + _editTranslate.dx,
+      bounds.center.dy + _editTranslate.dy,
+    );
+    c.rotate(_editRotate);
+    c.scale(_editScaleX, _editScaleY);
+    c.translate(-bounds.center.dx, -bounds.center.dy);
+    c.drawImage(_selectionClipImage!, bounds.topLeft, Paint());
+    c.restore();
+    final picture = recorder.endRecording();
+    final result = await picture.toImage(w, h);
+    _replaceAllWithRaster(result);
+    _selectionPhase = SelectionPhase.none;
+    _selectionMask = null;
+    _selectionClipImage = null;
+    notifyListeners();
+  }
+
+  void cancelSelectionEdit() {
+    _selectionPhase = SelectionPhase.selected;
+    _selectionClipImage = null;
+    _editScaleX = _editScaleY = 1;
+    _editRotate = 0;
+    _editTranslate = Offset.zero;
+    notifyListeners();
+  }
+
+  Future<ui.Image> rasterizeCanvas() async {
+    if (_currentProject == null) {
+      final c2 = Completer<ui.Image>();
+      final img = await _createTransparentImage(1, 1);
+      c2.complete(img);
+      return c2.future;
+    }
+    final w = _currentProject!.settings.width.toInt();
+    final h = _currentProject!.settings.height.toInt();
+    final recorder = ui.PictureRecorder();
+    final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+    for (final layer in _currentProject!.layers) {
+      if (!layer.visible) continue;
+      for (final d in layer.drawables) d.draw(c, Paint());
+      if (layer.image != null) {
+        final img = layer.image!;
+        c.save();
+        c.translate(layer.imageOffset.dx + img.width / 2, layer.imageOffset.dy + img.height / 2);
+        c.rotate(layer.imageRotation);
+        final flipX = layer.imageFlipH ? -1.0 : 1.0;
+        final flipY = layer.imageFlipV ? -1.0 : 1.0;
+        c.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+        c.drawImageRect(
+          img,
+          Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+          Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
+          Paint()..color = Colors.white.withValues(alpha: layer.opacity),
+        );
+        c.restore();
+      }
+    }
+    final picture = recorder.endRecording();
+    return picture.toImage(w, h);
+  }
+
+  Future<ui.Image> _createTransparentImage(int w, int h) async {
+    final pixels = Uint8List(w * h * 4);
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(pixels, w, h, ui.PixelFormat.rgba8888, completer.complete);
+    return completer.future;
+  }
+
+  void _replaceAllWithRaster(ui.Image image) {
+    if (_currentProject == null) return;
+    _currentProject!.layers.clear();
+    _currentProject!.layers.add(Layer(
+      id: _uuid.v4(),
+      name: 'Rasterized',
+      image: image,
+    ));
+    _currentProject!.currentLayerIndex = 0;
+    _hasUnsavedChanges = true;
+  }
+
+  void updateSelectionEditTransform({
+    double? scaleX, double? scaleY,
+    double? rotate,
+    Offset? translate,
+  }) {
+    if (!_aspectRatioLocked) {
+      if (scaleX != null) _editScaleX = scaleX;
+      if (scaleY != null) _editScaleY = scaleY;
+    } else {
+      if (scaleX != null) _editScaleX = _editScaleY = scaleX;
+      if (scaleY != null) _editScaleY = _editScaleX = scaleY;
+    }
+    if (rotate != null) _editRotate = rotate;
+    if (translate != null) _editTranslate = translate;
+    notifyListeners();
   }
 
   // ─── Image placement ─────────────────────────────────────

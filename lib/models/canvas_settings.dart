@@ -17,6 +17,10 @@ class CanvasSettings {
   final String? iccProfilePath;
   final List<int>? iccProfileData;
 
+  /// Document background color (ARGB). Layers stay transparent above it;
+  /// the background itself is not paintable.
+  final int backgroundColor;
+
   const CanvasSettings({
     required this.width,
     required this.height,
@@ -26,6 +30,7 @@ class CanvasSettings {
     this.channelDepth = 8,
     this.iccProfilePath,
     this.iccProfileData,
+    this.backgroundColor = 0xFFFFFFFF,
   });
 
   Map<String, dynamic> toJson() => {
@@ -36,6 +41,7 @@ class CanvasSettings {
         'colorModel': colorModel.name,
         'channelDepth': channelDepth,
         'iccProfilePath': iccProfilePath,
+        'backgroundColor': backgroundColor,
       };
 
   factory CanvasSettings.fromJson(Map<String, dynamic> json) =>
@@ -51,6 +57,8 @@ class CanvasSettings {
             orElse: () => ColorModel.sRGB),
         channelDepth: json['channelDepth'] as int? ?? 8,
         iccProfilePath: json['iccProfilePath'] as String?,
+        backgroundColor:
+            json['backgroundColor'] as int? ?? 0xFFFFFFFF,
       );
 
   CanvasSettings copyWith({
@@ -62,6 +70,7 @@ class CanvasSettings {
     int? channelDepth,
     String? iccProfilePath,
     List<int>? iccProfileData,
+    int? backgroundColor,
   }) =>
       CanvasSettings(
         width: width ?? this.width,
@@ -72,5 +81,6 @@ class CanvasSettings {
         channelDepth: channelDepth ?? this.channelDepth,
         iccProfilePath: iccProfilePath ?? this.iccProfilePath,
         iccProfileData: iccProfileData ?? this.iccProfileData,
+        backgroundColor: backgroundColor ?? this.backgroundColor,
       );
 }
