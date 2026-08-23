@@ -19,10 +19,49 @@ class CanvasProvider extends ChangeNotifier {
   double _referenceOpacity = 0.5;
   bool _showReference = false;
 
+  // Reference floating window state
+  Offset _refWinOffset = const Offset(48, 48);
+  Size _refWinSize = const Size(280, 220);
+  double _refImgScale = 1.0;
+  double _refImgRotation = 0.0;
+
   ui.Image? get referenceImage => _referenceImage;
   String get referencePath => _referencePath;
   double get referenceOpacity => _referenceOpacity;
   bool get showReference => _showReference;
+  Offset get refWinOffset => _refWinOffset;
+  Size get refWinSize => _refWinSize;
+  double get refImgScale => _refImgScale;
+  double get refImgRotation => _refImgRotation;
+
+  void setRefWinOffset(Offset o) {
+    _refWinOffset = Offset(o.dx.clamp(0, 4000), o.dy.clamp(0, 4000));
+    notifyListeners();
+  }
+
+  void setRefWinSize(Size s) {
+    _refWinSize = Size(
+      s.width.clamp(140.0, 2000.0),
+      s.height.clamp(110.0, 2000.0),
+    );
+    notifyListeners();
+  }
+
+  void setRefImgScale(double v) {
+    _refImgScale = v.clamp(0.1, 8.0);
+    notifyListeners();
+  }
+
+  void setRefImgRotation(double v) {
+    _refImgRotation = v;
+    notifyListeners();
+  }
+
+  void resetRefTransform() {
+    _refImgScale = 1.0;
+    _refImgRotation = 0.0;
+    notifyListeners();
+  }
 
   Future<void> setReferenceImage(String path) async {
     if (!File(path).existsSync()) return;
@@ -50,6 +89,7 @@ class CanvasProvider extends ChangeNotifier {
     _referenceImage = null;
     _referencePath = '';
     _showReference = false;
+    resetRefTransform();
     notifyListeners();
   }
 

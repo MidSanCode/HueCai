@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
 import '../providers/project_provider.dart';
+import '../models/project.dart';
 import '../providers/tool_provider.dart';
 import '../providers/canvas_provider.dart';
 import '../widgets/menu_bar.dart';
@@ -14,7 +15,9 @@ import '../widgets/panels/color_panel.dart';
 import '../widgets/panels/brush_panel.dart';
 import '../widgets/panels/layer_panel.dart';
 import '../widgets/canvas/paint_canvas.dart';
+import '../widgets/canvas/reference_floating_window.dart';
 import '../widgets/dialogs/brush_editor_dialog.dart';
+import '../widgets/selection_panel.dart';
 import 'settings_screen.dart';
 
 class EditorScreen extends StatefulWidget {
@@ -76,6 +79,7 @@ class _EditorScreenState extends State<EditorScreen> {
       );
     }
 
+    final pp = context.read<ProjectProvider>();
     final isWide = MediaQuery.of(context).size.width > 600;
 
     return MultiProvider(
@@ -85,8 +89,10 @@ class _EditorScreenState extends State<EditorScreen> {
       ],
       child: CallbackShortcuts(
         bindings: {
-          SingleActivator(LogicalKeyboardKey.keyZ, control: true): () => context.read<ProjectProvider>().undo(),
-          SingleActivator(LogicalKeyboardKey.keyY, control: true): () => context.read<ProjectProvider>().redo(),
+          SingleActivator(LogicalKeyboardKey.keyZ, control: true): () =>
+              pp.smartUndo(),
+          SingleActivator(LogicalKeyboardKey.keyY, control: true): () =>
+              pp.redo(),
           SingleActivator(LogicalKeyboardKey.f5): () => BrushEditorDialog.show(context),
         },
         child: Focus(
@@ -107,18 +113,56 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  Widget _buildBody(BuildContext context, dynamic project, bool isWide) {
+  Widget _buildBody(BuildContext context, Project project, bool isWide) {
     if (isWide) {
       return _WideLayout(
         project: project,
         showRightPanel: _showRightPanel,
         onToggleRightPanel: () => setState(() => _showRightPanel = !_showRightPanel),
+        onExit: _confirmExit,
       );
     }
     return _NarrowLayout(
       project: project,
       showMenu: () => _showTopMenu(context),
       showLayerPanel: () => _showLayerPanel(context),
+      onExit: _confirmExit,
+    );
+  }
+
+  /// Shows the unsaved-changes dialog if needed, then returns to workspace.
+  Future<void> _confirmExit() async {
+    final pp = context.read<ProjectProvider>();
+    if (!pp.hasUnsavedChanges) {
+      pp.closeProject();
+      Navigator.of(context).pop();
+      return;
+    }
+    await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('unsaved.title'.tr()),
+        content: Text('unsaved.body'.tr()),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop('cancel'), child: Text('unsaved.cancel'.tr())),
+          TextButton(
+            onPressed: () {
+              pp.closeProject();
+              Navigator.of(ctx).pop('discard');
+              Navigator.of(context).pop();
+            },
+            child: Text('unsaved.discard'.tr()),
+          ),
+          FilledButton(
+            onPressed: () async {
+              await pp.saveProject();
+              if (ctx.mounted) Navigator.of(ctx).pop('save');
+              if (mounted) Navigator.of(context).pop();
+            },
+            child: Text('unsaved.save'.tr()),
+          ),
+        ],
+      ),
     );
   }
 
@@ -248,7 +292,9 @@ class _EditorScreenState extends State<EditorScreen> {
       if (value == null) return;
       final tp = context.read<ToolProvider>();
       switch (value) {
-        case 'select': tp.setTool(ToolType.select);
+        case 'select':
+          tp.setTool(ToolType.select);
+          context.read<ProjectProvider>().enterSelectionMode();
         case 'move': tp.setTool(ToolType.move);
         case 'fill': tp.setTool(ToolType.fill);
         case 'eyedropper': tp.setTool(ToolType.eyedropper);
@@ -308,14 +354,16 @@ class _EditorScreenState extends State<EditorScreen> {
 // ─── Wide (landscape/desktop) layout ───────────────────────────
 
 class _WideLayout extends StatefulWidget {
-  final dynamic project;
+  final Project project;
   final bool showRightPanel;
   final VoidCallback onToggleRightPanel;
+  final VoidCallback onExit;
 
   const _WideLayout({
     required this.project,
     required this.showRightPanel,
     required this.onToggleRightPanel,
+    required this.onExit,
   });
 
   @override
@@ -347,21 +395,40 @@ class _WideLayoutState extends State<_WideLayout> {
     );
 
     return Column(children: [
-      const EditorMenuBar(),
+      Row(children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: IconButton(
+            icon: const Icon(Icons.arrow_back, size: 18),
+            onPressed: widget.onExit,
+            tooltip: 'app.exit'.tr(),
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            padding: const EdgeInsets.all(4),
+          ),
+        ),
+        const Expanded(child: EditorMenuBar()),
+      ]),
       const ImageEditToolbar(),
-      Expanded(child: SafeArea(child: Row(children: [
-        Column(mainAxisSize: MainAxisSize.min, children: [
-          Expanded(child: ToolPanel(toolProvider: toolProvider)),
-        ]),
-        Expanded(child: Padding(padding: const EdgeInsets.all(4), child: PaintCanvas(project: widget.project))),
-        if (!widget.showRightPanel)
-          Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            IconButton(icon: const Icon(Icons.chevron_left, size: 20), onPressed: widget.onToggleRightPanel,
-              tooltip: 'app.show_panels'.tr(), visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28), padding: const EdgeInsets.all(4)),
+      Expanded(child: SafeArea(child: Stack(
+        children: [
+          Row(children: [
+            Column(mainAxisSize: MainAxisSize.min, children: [
+              Expanded(child: ToolPanel(toolProvider: toolProvider)),
+            ]),
+            Expanded(child: Padding(padding: const EdgeInsets.all(4), child: PaintCanvas(project: widget.project))),
+            if (!widget.showRightPanel)
+              Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                IconButton(icon: const Icon(Icons.chevron_left, size: 20), onPressed: widget.onToggleRightPanel,
+                  tooltip: 'app.show_panels'.tr(), visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28), padding: const EdgeInsets.all(4)),
+              ]),
+            if (widget.showRightPanel) rightPanel,
           ]),
-        if (widget.showRightPanel) rightPanel,
-      ]))),
+          const SelectionPanel(),
+          const ReferenceFloatingWindow(),
+        ],
+      ))),
     ]);
   }
 }
@@ -369,28 +436,36 @@ class _WideLayoutState extends State<_WideLayout> {
 // ─── Narrow (portrait/mobile) layout ───────────────────────────
 
 class _NarrowLayout extends StatelessWidget {
-  final dynamic project;
+  final Project project;
   final VoidCallback showMenu;
   final VoidCallback showLayerPanel;
+  final VoidCallback onExit;
 
   const _NarrowLayout({
     required this.project,
     required this.showMenu,
     required this.showLayerPanel,
+    required this.onExit,
   });
 
   @override
   Widget build(BuildContext context) {
     final toolProvider = context.watch<ToolProvider>();
     return Column(children: [
-      _TopBar(showMenu: showMenu, showLayerPanel: showLayerPanel),
+      _TopBar(showMenu: showMenu, showLayerPanel: showLayerPanel, onExit: onExit),
       const ImageEditToolbar(),
-      Expanded(child: SafeArea(child: Row(children: [
-        Column(mainAxisSize: MainAxisSize.min, children: [
-          Expanded(child: ToolPanel(toolProvider: toolProvider, portrait: true)),
-        ]),
-        Expanded(child: Padding(padding: const EdgeInsets.all(4), child: PaintCanvas(project: project))),
-      ]))),
+      Expanded(child: SafeArea(child: Stack(
+        children: [
+          Row(children: [
+            Column(mainAxisSize: MainAxisSize.min, children: [
+              Expanded(child: ToolPanel(toolProvider: toolProvider, portrait: true)),
+            ]),
+            Expanded(child: Padding(padding: const EdgeInsets.all(4), child: PaintCanvas(project: project))),
+          ]),
+          const SelectionPanel(),
+          const ReferenceFloatingWindow(),
+        ],
+      ))),
     ]);
   }
 }
@@ -398,7 +473,8 @@ class _NarrowLayout extends StatelessWidget {
 class _TopBar extends StatelessWidget {
   final VoidCallback showMenu;
   final VoidCallback showLayerPanel;
-  const _TopBar({required this.showMenu, required this.showLayerPanel});
+  final VoidCallback onExit;
+  const _TopBar({required this.showMenu, required this.showLayerPanel, required this.onExit});
 
   @override
   Widget build(BuildContext context) {
@@ -411,25 +487,7 @@ class _TopBar extends StatelessWidget {
       child: Row(children: [
         IconButton(
           icon: const Icon(Icons.arrow_back, size: 18),
-          onPressed: () async {
-            if (pp.hasUnsavedChanges) {
-              await showDialog<String>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: Text('unsaved.title'.tr()),
-                  content: Text('unsaved.body'.tr()),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.of(ctx).pop('cancel'), child: Text('unsaved.cancel'.tr())),
-                    TextButton(onPressed: () { pp.closeProject(); Navigator.of(ctx).pop('discard'); Navigator.of(context).pop(); }, child: Text('unsaved.discard'.tr())),
-                    FilledButton(onPressed: () async { await pp.saveProject(); if (ctx.mounted) Navigator.of(ctx).pop('save'); Navigator.of(context).pop(); }, child: Text('unsaved.save'.tr())),
-                  ],
-                ),
-              );
-            } else {
-              pp.closeProject();
-              Navigator.of(context).pop();
-            }
-          },
+          onPressed: onExit,
           tooltip: 'app.exit'.tr(),
           visualDensity: VisualDensity.compact,
           constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
