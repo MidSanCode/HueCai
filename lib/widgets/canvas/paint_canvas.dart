@@ -1063,8 +1063,11 @@ class _CanvasPainter extends CustomPainter {
       currentDrawable!.draw(canvas, Paint());
     }
 
-    // Selection overlay
-    if (hasActiveSelection && selectionMaskImage != null) {
+    // Selection overlay: blue tint while selecting; during editing only
+    // marching ants remain so blank areas don't look like moved content.
+    if (hasActiveSelection &&
+        selectionMaskImage != null &&
+        selectionPhase != SelectionPhase.editing) {
       canvas.drawImage(selectionMaskImage!, Offset.zero, Paint());
     }
 
