@@ -249,5 +249,6 @@
 ,
   "menu.menu": "Menu",
   "selection.lock_aspect": "Lock aspect",
-  "selection.new_layer": "New layer"
+  "selection.new_layer": "New layer",
+  "selection.apply": "Apply"
 }

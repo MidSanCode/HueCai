@@ -249,5 +249,6 @@
 ,
   "menu.menu": "菜单",
   "selection.lock_aspect": "锁定比例",
-  "selection.new_layer": "作为新图层"
+  "selection.new_layer": "作为新图层",
+  "selection.apply": "应用"
 }
