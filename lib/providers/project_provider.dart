@@ -319,16 +319,41 @@ class ProjectProvider extends ChangeNotifier {
     try {
       final w = _currentProject!.settings.width;
       final h = _currentProject!.settings.height;
+      final bg = Color(_currentProject!.settings.backgroundColor);
+      final isJpg = format == 'jpg';
+      // PNG keeps transparency when the background is transparent;
+      // JPEG has no alpha channel, so fall back to white.
+      final useBg = isJpg ? (bg.a > 0 ? bg : Colors.white) : bg;
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
-      canvas.drawRect(
-        Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
-        Paint()..color = Colors.white,
-      );
+      // Draw the background only when it is visible; a transparent
+      // background exports as an alpha channel in PNG.
+      if (useBg.a > 0) {
+        canvas.drawRect(
+          Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+          Paint()..color = useBg,
+        );
+      }
       for (final layer in _currentProject!.layers) {
         if (!layer.visible) continue;
         for (final d in layer.drawables) {
           d.draw(canvas, Paint());
+        }
+        if (layer.image != null) {
+          final img = layer.image!;
+          canvas.save();
+          canvas.translate(layer.imageOffset.dx + img.width / 2, layer.imageOffset.dy + img.height / 2);
+          canvas.rotate(layer.imageRotation);
+          final flipX = layer.imageFlipH ? -1.0 : 1.0;
+          final flipY = layer.imageFlipV ? -1.0 : 1.0;
+          canvas.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+          canvas.drawImageRect(
+            img,
+            Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+            Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
+            Paint()..color = Colors.white.withValues(alpha: layer.opacity),
+          );
+          canvas.restore();
         }
       }
       final picture = recorder.endRecording();
