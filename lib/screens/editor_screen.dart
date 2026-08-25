@@ -30,6 +30,9 @@ class EditorScreen extends StatefulWidget {
 class _EditorScreenState extends State<EditorScreen> {
   late final CanvasProvider _canvasProvider;
   late final ToolProvider _toolProvider;
+  // Captured in didChangeDependencies so dispose() never performs an
+  // ancestor lookup on a deactivated widget tree.
+  ProjectProvider? _projectProvider;
   bool _showRightPanel = true;
 
   @override
@@ -38,13 +41,21 @@ class _EditorScreenState extends State<EditorScreen> {
     _canvasProvider = CanvasProvider();
     _toolProvider = ToolProvider();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ProjectProvider>().startBackupTimer();
+      if (!mounted) return;
+      _projectProvider = context.read<ProjectProvider>();
+      _projectProvider!.startBackupTimer();
     });
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _projectProvider ??= context.read<ProjectProvider>();
+  }
+
+  @override
   void dispose() {
-    context.read<ProjectProvider>().stopBackupTimer();
+    _projectProvider?.stopBackupTimer();
     _canvasProvider.dispose();
     _toolProvider.dispose();
     super.dispose();
