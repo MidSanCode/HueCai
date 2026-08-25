@@ -1029,9 +1029,12 @@ class _CanvasPainter extends CustomPainter {
     // document rectangle: the workspace background can never be painted on.
     canvas.clipRect(docRect);
 
-    // Document background color. Layers themselves stay transparent.
-    canvas.drawRect(docRect, Paint()
-      ..color = Color(project.settings.backgroundColor));
+    // Document background color (skipped when transparent so the
+    // workspace shows through). Layers themselves stay transparent.
+    final bgColor = Color(project.settings.backgroundColor);
+    if (bgColor.a > 0) {
+      canvas.drawRect(docRect, Paint()..color = bgColor);
+    }
 
     for (final layer in project.layers) {
       if (!layer.visible) continue;

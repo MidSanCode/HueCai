@@ -514,6 +514,22 @@ void _showBackgroundColorDialog(BuildContext context) {
         spacing: 8,
         runSpacing: 8,
         children: [
+          // Transparent option (checkerboard tile).
+          GestureDetector(
+            onTap: () {
+              pp.setCanvasBackgroundColor(const Color(0x00000000));
+              Navigator.of(ctx).pop();
+            },
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.grey.shade500, width: 1.5),
+              ),
+              child: CustomPaint(painter: _CheckerPainter()),
+            ),
+          ),
           for (final c in presets)
             GestureDetector(
               onTap: () {
@@ -540,6 +556,27 @@ void _showBackgroundColorDialog(BuildContext context) {
       ],
     ),
   );
+}
+
+class _CheckerPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    const cell = 6.0;
+    final light = Paint()..color = const Color(0xFFCCCCCC);
+    final dark = Paint()..color = const Color(0xFF888888);
+    for (double y = 0; y < size.height; y += cell) {
+      for (double x = 0; x < size.width; x += cell) {
+        final even = ((x / cell).floor() + (y / cell).floor()).isEven;
+        canvas.drawRect(
+          Rect.fromLTWH(x, y, cell, cell),
+          even ? light : dark,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CheckerPainter oldDelegate) => false;
 }
 
 void _showExportDialog(BuildContext context) {
