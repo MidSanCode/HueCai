@@ -26,6 +26,16 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   bool _showTrash = false;
   List<File> _trashFiles = [];
 
+  /// Bumped every time we come back from the editor so project cards
+  /// reload their (possibly regenerated) thumbnails.
+  int _thumbRevision = 0;
+
+  void _refreshAfterEditor() {
+    if (!mounted) return;
+    context.read<ProjectProvider>().loadRecentProjects();
+    setState(() => _thumbRevision++);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -50,7 +60,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       if (context.mounted) {
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const EditorScreen()),
-        );
+        ).then((_) => _refreshAfterEditor());
       }
     }
   }
@@ -74,7 +84,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       if (mounted) {
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const EditorScreen()),
-        );
+        ).then((_) => _refreshAfterEditor());
       }
     }
   }
@@ -338,6 +348,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                 final project = provider.recentProjects[i - 2];
                 return _ProjectCard(
                   project: project,
+                  revision: _thumbRevision,
                   selected: _selectionMode && project.filePath != null && _selectedPaths.contains(project.filePath),
                   showCheckbox: _selectionMode,
                   onTap: () {
@@ -368,7 +379,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   void _openAndNavigate(BuildContext context, ProjectProvider provider, String filePath) async {
     await provider.openProject(filePath);
     if (context.mounted) {
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EditorScreen()));
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EditorScreen()))
+          .then((_) => _refreshAfterEditor());
     }
   }
 
@@ -504,8 +516,13 @@ class _ProjectCard extends StatefulWidget {
   final VoidCallback? onLongPress;
   final VoidCallback? onContextMenu;
 
+  /// Incremented by the workspace whenever we return from the editor so
+  /// stale thumbnails get reloaded.
+  final int revision;
+
   const _ProjectCard({
     required this.project,
+    this.revision = 0,
     this.selected = false,
     this.showCheckbox = false,
     required this.onTap,
@@ -519,6 +536,8 @@ class _ProjectCard extends StatefulWidget {
 
 class _ProjectCardState extends State<_ProjectCard> {
   String? _thumbPath;
+  int _stamp = 0;
+  int _seenRevision = -1;
 
   @override
   void initState() {
@@ -529,16 +548,29 @@ class _ProjectCardState extends State<_ProjectCard> {
   @override
   void didUpdateWidget(_ProjectCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _loadThumbnail();
+    if (oldWidget.revision != widget.revision ||
+        oldWidget.project.filePath != widget.project.filePath) {
+      _loadThumbnail();
+    }
   }
 
   void _loadThumbnail() {
     if (widget.project.filePath == null) return;
     final thumbFile = File('${widget.project.filePath}.thumb.png');
-    if (thumbFile.existsSync() && mounted) {
-      setState(() => _thumbPath = thumbFile.path);
+    if (thumbFile.existsSync()) {
+      final stamp = thumbFile.lastModifiedSync().millisecondsSinceEpoch;
+      // Evict the decoded image from Flutter's cache when the file changed,
+      // otherwise the same path keeps showing the old preview.
+      if (_thumbPath == thumbFile.path && stamp != _stamp) {
+        FileImage(thumbFile).evict();
+      }
+      _stamp = stamp;
+      _thumbPath = thumbFile.path;
+      _seenRevision = widget.revision;
+      if (mounted) setState(() {});
     } else {
       _thumbPath = null;
+      if (mounted) setState(() {});
     }
   }
 
@@ -592,7 +624,14 @@ class _ProjectCardState extends State<_ProjectCard> {
                   fit: StackFit.expand,
                   children: [
                     if (_thumbPath != null)
-                      Image.file(File(_thumbPath!), fit: BoxFit.cover, width: double.infinity, height: double.infinity, errorBuilder: (_, _, _) => _thumbPlaceholder(theme))
+                      Image.file(
+                        File(_thumbPath!),
+                        key: ValueKey('$_thumbPath#$_stamp'),
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                        errorBuilder: (_, _, _) => _thumbPlaceholder(theme),
+                      )
                     else
                       _thumbPlaceholder(theme),
                     if (widget.showCheckbox)

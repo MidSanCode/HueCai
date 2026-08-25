@@ -313,14 +313,34 @@ class ProjectService {
       final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, thumbW.toDouble(), thumbH.toDouble()));
       canvas.save();
       canvas.scale(scale, scale);
-      canvas.drawRect(
-        Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
-        Paint()..color = Colors.white,
-      );
+      // Respect the document background (transparent stays transparent).
+      final bgColor = Color(project.settings.backgroundColor);
+      if (bgColor.a > 0) {
+        canvas.drawRect(
+          Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+          Paint()..color = bgColor,
+        );
+      }
       for (final layer in project.layers) {
         if (!layer.visible) continue;
         for (final d in layer.drawables) {
           d.draw(canvas, Paint());
+        }
+        if (layer.image != null) {
+          final img = layer.image!;
+          canvas.save();
+          canvas.translate(layer.imageOffset.dx + img.width / 2, layer.imageOffset.dy + img.height / 2);
+          canvas.rotate(layer.imageRotation);
+          final flipX = layer.imageFlipH ? -1.0 : 1.0;
+          final flipY = layer.imageFlipV ? -1.0 : 1.0;
+          canvas.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+          canvas.drawImageRect(
+            img,
+            Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+            Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
+            Paint()..color = Colors.white.withValues(alpha: layer.opacity),
+          );
+          canvas.restore();
         }
       }
       canvas.restore();
