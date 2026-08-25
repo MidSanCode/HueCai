@@ -76,7 +76,7 @@ class _FullMenuBar extends StatelessWidget {
                 pp.selectedDrawable!.copyWith();
               }
             }),
-            _MenuItem('menu.edit.paste'.tr(), Icons.content_paste, () {}),
+            _MenuItem.disabled('menu.edit.paste'.tr(), Icons.content_paste),
             _MenuItem('menu.edit.cut'.tr(), Icons.content_cut, () {
               final pp = context.read<ProjectProvider>();
               if (pp.selectedDrawable != null) {
@@ -106,22 +106,10 @@ class _FullMenuBar extends StatelessWidget {
                 context.read<CanvasProvider>().resetView),
           ]),
           _MenuButton(label: 'menu.image'.tr(), children: [
-            _MenuItem('menu.image.flip_h'.tr(), Icons.flip, () {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('Not yet implemented')));
-            }),
-            _MenuItem('menu.image.flip_v'.tr(), Icons.flip, () {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('Not yet implemented')));
-            }),
-            _MenuItem('menu.image.rotate_cw'.tr(), Icons.rotate_right, () {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('Not yet implemented')));
-            }),
-            _MenuItem('menu.image.rotate_ccw'.tr(), Icons.rotate_left, () {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('Not yet implemented')));
-            }),
+            _MenuItem.disabled('menu.image.flip_h'.tr(), Icons.flip),
+            _MenuItem.disabled('menu.image.flip_v'.tr(), Icons.flip),
+            _MenuItem.disabled('menu.image.rotate_cw'.tr(), Icons.rotate_right),
+            _MenuItem.disabled('menu.image.rotate_ccw'.tr(), Icons.rotate_left),
             const _MenuDivider(),
             _MenuItem('menu.image.background_color'.tr(), Icons.format_color_fill,
                 () => _showBackgroundColorDialog(context)),
@@ -350,7 +338,6 @@ class _CompactMenuBar extends StatelessWidget {
               const PopupMenuDivider(),
               _popupItem('layer_new', Icons.layers, 'menu.layer.new'),
               const PopupMenuDivider(),
-              const PopupMenuDivider(),
               _popupItem('brush_settings', Icons.brush, 'menu.settings.brush'),
               _popupItem('open_settings', Icons.settings, 'menu.settings.app_settings'),
               _popupItem('about', Icons.info_outline, 'menu.help.about'),
@@ -418,10 +405,16 @@ class _MenuButtonState extends State<_MenuButton> {
       } else if (item is _MenuItem) {
         menuItems.add(
           PopupMenuItem<_BaseMenuItem>(
-            value: item,
+            enabled: item.enabled,
+            value: item.enabled ? item : null,
             child: ListTile(
-              leading: Icon(item.icon, size: 18),
-              title: Text(item.label, style: const TextStyle(fontSize: 13)),
+              leading: Icon(item.icon, size: 18,
+                color: item.enabled ? null : Theme.of(context).disabledColor),
+              title: Text(item.label,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: item.enabled ? null : Theme.of(context).disabledColor,
+                )),
               dense: true,
               contentPadding: EdgeInsets.zero,
             ),
@@ -437,8 +430,8 @@ class _MenuButtonState extends State<_MenuButton> {
       items: menuItems,
       elevation: 2,
     ).then((value) {
-      if (value != null && value is _MenuItem) {
-        value.onTap();
+      if (value != null && value is _MenuItem && value.onTap != null) {
+        value.onTap!();
       }
     });
   }
@@ -673,9 +666,13 @@ class _MenuDivider extends _BaseMenuItem {
 class _MenuItem extends _BaseMenuItem {
   final String label;
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _MenuItem(this.label, this.icon, this.onTap);
+
+  const _MenuItem.disabled(this.label, this.icon) : onTap = null;
+
+  bool get enabled => onTap != null;
 }
 
 class _BaseMenuItem {

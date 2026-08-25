@@ -291,10 +291,12 @@ class _ToolPanelState extends State<ToolPanel> {
     final theme = Theme.of(context);
     final isShapeTool = tp.currentTool == ToolType.shape;
     final shapeIcon = _shapeIcon(tp.currentShape);
+    final shapeLabel = _toolLabels[ToolType.shape]?.tr() ?? 'tool.shape'.tr();
+    final currentShapeLabel = _shapeLabel(tp.currentShape).tr();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
       child: Tooltip(
-        message: 'tool.rect'.tr(),
+        message: isShapeTool ? currentShapeLabel : shapeLabel,
         child: Material(
           color: isShapeTool ? theme.colorScheme.primaryContainer : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
@@ -319,6 +321,16 @@ class _ToolPanelState extends State<ToolPanel> {
         ),
       ),
     );
+  }
+
+  String _shapeLabel(ShapeType type) {
+    switch (type) {
+      case ShapeType.rect: return 'tool.rect';
+      case ShapeType.ellipse: return 'tool.ellipse';
+      case ShapeType.polygon: return 'shape.polygon';
+      case ShapeType.line: return 'shape.line';
+      case ShapeType.curve: return 'shape.curve';
+    }
   }
 
   Widget _colorPanelTrigger(BuildContext context) {

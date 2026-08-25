@@ -229,25 +229,30 @@ class _WheelPainter extends CustomPainter {
 
   _WheelPainter({required this.selectedColor, required this.hue, required this.sat, required this.val});
 
+  /// One color per degree of hue, precomputed once for the sweep ring.
+  static final List<Color> _ringColors = List.generate(
+    360,
+    (i) => HSVColor.fromAHSV(1, i.toDouble(), 1, 1).toColor(),
+  );
+
   @override
   void paint(Canvas canvas, Size size) {
     final cx = size.width / 2, cy = size.height / 2;
     final outerR = size.width / 2 - 4;
     final innerR = outerR * 0.7;
 
-    for (int a = 0; a < 360; a += 2) {
-      final rad = a * math.pi / 180;
-      final nextRad = (a + 2) * math.pi / 180;
-      final color = HSVColor.fromAHSV(1, a.toDouble(), 1, 1).toColor();
-      final p = Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = outerR - innerR;
-      canvas.drawArc(
-        Rect.fromCircle(center: Offset(cx, cy), radius: (outerR + innerR) / 2),
-        -rad - math.pi / 2, -(nextRad - rad), false, p,
-      );
-    }
+    // Hue ring drawn as a single sweep-gradient annulus (even‑odd fill of an
+    // outer circle minus an inner circle). This replaces ~180 per‑slice arc
+    // calls with one path, which also avoids banding on the wheel.
+    final shader = ui.Gradient.sweep(
+      Offset(cx, cy),
+      _ringColors,
+    );
+    final ringPath = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: outerR))
+      ..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: innerR));
+    canvas.drawPath(ringPath, Paint()..shader = shader);
 
     final triR = innerR;
     final top = Offset(cx, cy - triR);

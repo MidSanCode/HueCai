@@ -16,6 +16,7 @@ import '../widgets/panels/brush_panel.dart';
 import '../widgets/panels/layer_panel.dart';
 import '../widgets/canvas/paint_canvas.dart';
 import '../widgets/canvas/reference_floating_window.dart';
+import '../widgets/canvas/canvas_zoom_overlay.dart';
 import '../widgets/dialogs/brush_editor_dialog.dart';
 import '../widgets/selection_panel.dart';
 import 'settings_screen.dart';
@@ -438,6 +439,7 @@ class _WideLayoutState extends State<_WideLayout> {
           ]),
           const SelectionPanel(),
           const ReferenceFloatingWindow(),
+          const CanvasZoomOverlay(),
         ],
       ))),
     ]);
@@ -475,6 +477,7 @@ class _NarrowLayout extends StatelessWidget {
           ]),
           const SelectionPanel(),
           const ReferenceFloatingWindow(),
+          const CanvasZoomOverlay(),
         ],
       ))),
     ]);
@@ -492,8 +495,8 @@ class _TopBar extends StatelessWidget {
     final pp = context.watch<ProjectProvider>();
     final name = pp.currentProject?.name ?? '';
     return Container(
-      height: 32,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       color: Theme.of(context).colorScheme.surfaceContainerLow,
       child: Row(children: [
         IconButton(
@@ -501,7 +504,7 @@ class _TopBar extends StatelessWidget {
           onPressed: onExit,
           tooltip: 'app.exit'.tr(),
           visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           padding: const EdgeInsets.all(4),
         ),
         Expanded(child: Text(name, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)),
@@ -510,7 +513,7 @@ class _TopBar extends StatelessWidget {
           onPressed: showLayerPanel,
           tooltip: 'menu.layer'.tr(),
           visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           padding: const EdgeInsets.all(4),
         ),
         IconButton(
@@ -518,7 +521,7 @@ class _TopBar extends StatelessWidget {
           onPressed: showMenu,
           tooltip: 'menu.menu'.tr(),
           visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           padding: const EdgeInsets.all(4),
         ),
       ]),

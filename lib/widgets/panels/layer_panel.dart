@@ -15,6 +15,9 @@ class LayerPanel extends StatelessWidget {
         final project = provider.currentProject;
         if (project == null) return const SizedBox.shrink();
 
+        final canMoveUp = project.currentLayerIndex < project.layers.length - 1;
+        final canMoveDown = project.currentLayerIndex > 0;
+
         return Card(
           margin: const EdgeInsets.all(8),
           child: Padding(
@@ -23,41 +26,33 @@ class LayerPanel extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Consumer<ProjectProvider>(
-                  builder: (ctx, pp, _) {
-                    final canMoveUp = pp.currentProject != null &&
-                        pp.currentProject!.currentLayerIndex < pp.currentProject!.layers.length - 1;
-                    final canMoveDown = pp.currentProject != null &&
-                        pp.currentProject!.currentLayerIndex > 0;
-                    return Row(
-                      children: [
-                        Text('layer.panel'.tr(), style: theme.textTheme.labelMedium),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.arrow_upward, size: 16),
-                          onPressed: canMoveUp
-                              ? () { pp.saveSnapshot(); pp.moveLayerUp(pp.currentProject!.currentLayerIndex); }
-                              : null,
-                          tooltip: 'menu.layer.move_up'.tr(),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.arrow_downward, size: 16),
-                          onPressed: canMoveDown
-                              ? () { pp.saveSnapshot(); pp.moveLayerDown(pp.currentProject!.currentLayerIndex); }
-                              : null,
-                          tooltip: 'menu.layer.move_down'.tr(),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.add, size: 18),
-                          onPressed: () => provider.addLayer(),
-                          tooltip: 'layer.new'.tr(),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      ],
-                    );
-                  },
+                Row(
+                  children: [
+                    Text('layer.panel'.tr(), style: theme.textTheme.labelMedium),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_upward, size: 16),
+                      onPressed: canMoveUp
+                          ? () { provider.saveSnapshot(); provider.moveLayerUp(project.currentLayerIndex); }
+                          : null,
+                      tooltip: 'menu.layer.move_up'.tr(),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_downward, size: 16),
+                      onPressed: canMoveDown
+                          ? () { provider.saveSnapshot(); provider.moveLayerDown(project.currentLayerIndex); }
+                          : null,
+                      tooltip: 'menu.layer.move_down'.tr(),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add, size: 18),
+                      onPressed: () => provider.addLayer(),
+                      tooltip: 'layer.new'.tr(),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
                 ),
                 const Divider(height: 8),
                 SizedBox(

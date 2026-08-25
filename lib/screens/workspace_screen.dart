@@ -25,10 +25,18 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   final Set<String> _selectedPaths = {};
   bool _showTrash = false;
   List<File> _trashFiles = [];
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   /// Bumped every time we come back from the editor so project cards
   /// reload their (possibly regenerated) thumbnails.
   int _thumbRevision = 0;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   void _refreshAfterEditor() {
     if (!mounted) return;
@@ -141,7 +149,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(isDense: true, hintText: 'folder_name'),
+          decoration: InputDecoration(isDense: true, hintText: 'workspace.folder_hint'.tr()),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(dCtx).pop(), child: Text('dialog.cancel'.tr())),
@@ -195,12 +203,19 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Future<void> _showCardContextMenu(BuildContext ctx, Project project) async {
+    final theme = Theme.of(context);
     final result = await showMenu<String>(
       context: ctx,
       position: RelativeRect.fromLTRB(100, 100, 100, 100),
       items: [
-        const PopupMenuItem(value: 'rename', child: ListTile(leading: Icon(Icons.edit, size: 18), title: Text('Rename'), dense: true)),
-        const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete, size: 18), title: Text('Delete'), dense: true)),
+        PopupMenuItem(value: 'rename', child: ListTile(
+          leading: Icon(Icons.edit, size: 18, color: theme.colorScheme.onSurfaceVariant),
+          title: Text('workspace.rename'.tr()), dense: true,
+        )),
+        PopupMenuItem(value: 'delete', child: ListTile(
+          leading: Icon(Icons.delete, size: 18, color: theme.colorScheme.error),
+          title: Text('workspace.delete'.tr()), dense: true,
+        )),
       ],
     );
     final pp = context.read<ProjectProvider>();
@@ -223,14 +238,14 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             ? IconButton(icon: const Icon(Icons.close), onPressed: _exitSelection)
             : null,
         title: _selectionMode
-            ? Text('${_selectedPaths.length} selected')
+            ? Text('workspace.selected'.tr(namedArgs: {'count': '${_selectedPaths.length}'}))
             : Text('app.name'.tr()),
         centerTitle: !_selectionMode,
         actions: _selectionMode
             ? [
                 IconButton(
                   icon: const Icon(Icons.delete, size: 20),
-                  tooltip: 'Delete',
+                  tooltip: 'workspace.delete'.tr(),
                   onPressed: () async {
                     for (final p in _selectedPaths) {
                       await pp.deleteProject(p);
@@ -320,58 +335,105 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   Widget _buildProjectGrid(BuildContext context, ThemeData theme, ProjectProvider provider) {
     if (provider.loading) return const Center(child: CircularProgressIndicator());
-    if (provider.recentProjects.isEmpty) return _EmptyState(onNew: _showNewProjectDialog);
+    if (provider.recentProjects.isEmpty) {
+      return _EmptyState(
+        onNew: _showNewProjectDialog,
+        onOpen: () => _openProject(context),
+      );
+    }
+
+    final query = _searchQuery.trim().toLowerCase();
+    final projects = query.isEmpty
+        ? provider.recentProjects
+        : provider.recentProjects.where((p) => p.name.toLowerCase().contains(query)).toList();
+    final count = _crossAxisCount(context);
+    final tileW = (MediaQuery.of(context).size.width - 32 - 12 * (count - 1)) / count;
 
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('workspace.recent'.tr(), style: theme.textTheme.titleMedium),
+          Row(
+            children: [
+              Text('workspace.recent'.tr(), style: theme.textTheme.titleMedium),
+              const SizedBox(width: 12),
+              Expanded(child: _buildSearchField(theme)),
+            ],
+          ),
           const SizedBox(height: 12),
           Expanded(
-            child: GridView.builder(
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: _crossAxisCount(context),
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 1.2,
-              ),
-              itemCount: provider.recentProjects.length + 2,
-              itemBuilder: (ctx, i) {
-                if (i == 0) {
-                  return _NewCard(onTap: _showNewProjectDialog);
-                }
-                if (i == 1) {
-                  return _OpenCard(onTap: () => _openProject(context));
-                }
-                final project = provider.recentProjects[i - 2];
-                return _ProjectCard(
-                  project: project,
-                  revision: _thumbRevision,
-                  selected: _selectionMode && project.filePath != null && _selectedPaths.contains(project.filePath),
-                  showCheckbox: _selectionMode,
-                  onTap: () {
-                    if (_selectionMode && project.filePath != null) {
-                      _toggleSelection(project.filePath!);
-                    } else if (project.filePath != null) {
-                      _openAndNavigate(context, provider, project.filePath!);
-                    }
-                  },
-                  onLongPress: () {
-                    if (project.filePath != null) {
-                      setState(() {
-                        _selectionMode = true;
-                        _selectedPaths.add(project.filePath!);
-                      });
-                    }
-                  },
-                  onContextMenu: () => _showCardContextMenu(context, project),
-                );
-              },
-            ),
+            child: projects.isEmpty
+                ? Center(child: Text('workspace.no_results'.tr(), style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant)))
+                : GridView.builder(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: count,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 1.2,
+                    ),
+                    itemCount: projects.length + 2,
+                    itemBuilder: (ctx, i) {
+                      if (i == 0) {
+                        return _NewCard(onTap: _showNewProjectDialog);
+                      }
+                      if (i == 1) {
+                        return _OpenCard(onTap: () => _openProject(context));
+                      }
+                      final project = projects[i - 2];
+                      return _ProjectCard(
+                        project: project,
+                        thumbWidth: tileW,
+                        revision: _thumbRevision,
+                        selected: _selectionMode && project.filePath != null && _selectedPaths.contains(project.filePath),
+                        showCheckbox: _selectionMode,
+                        onTap: () {
+                          if (_selectionMode && project.filePath != null) {
+                            _toggleSelection(project.filePath!);
+                          } else if (project.filePath != null) {
+                            _openAndNavigate(context, provider, project.filePath!);
+                          }
+                        },
+                        onLongPress: () {
+                          if (project.filePath != null) {
+                            setState(() {
+                              _selectionMode = true;
+                              _selectedPaths.add(project.filePath!);
+                            });
+                          }
+                        },
+                        onContextMenu: () => _showCardContextMenu(context, project),
+                      );
+                    },
+                  ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSearchField(ThemeData theme) {
+    return SizedBox(
+      height: 36,
+      child: TextField(
+        controller: _searchController,
+        onChanged: (v) => setState(() => _searchQuery = v),
+        style: const TextStyle(fontSize: 13),
+        decoration: InputDecoration(
+          hintText: 'workspace.search_hint'.tr(),
+          prefixIcon: Padding(
+            padding: const EdgeInsets.only(left: 8, right: 4),
+            child: Icon(Icons.search, size: 18, color: theme.colorScheme.onSurfaceVariant),
+          ),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(18),
+            borderSide: BorderSide.none,
+          ),
+          filled: true,
+          fillColor: theme.colorScheme.surfaceContainerHigh,
+        ),
       ),
     );
   }
@@ -469,7 +531,8 @@ class _OpenCard extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   final VoidCallback onNew;
-  const _EmptyState({required this.onNew});
+  final VoidCallback onOpen;
+  const _EmptyState({required this.onNew, required this.onOpen});
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -495,7 +558,7 @@ class _EmptyState extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
-                  onPressed: () {},
+                  onPressed: onOpen,
                   icon: const Icon(Icons.folder_open, size: 18),
                   label: Text('workspace.open'.tr()),
                 ),
@@ -516,12 +579,17 @@ class _ProjectCard extends StatefulWidget {
   final VoidCallback? onLongPress;
   final VoidCallback? onContextMenu;
 
+  /// Approximate card tile width (logical px). Used to cap the decoded
+  /// thumbnail resolution so large previews don't consume excessive memory.
+  final double thumbWidth;
+
   /// Incremented by the workspace whenever we return from the editor so
   /// stale thumbnails get reloaded.
   final int revision;
 
   const _ProjectCard({
     required this.project,
+    this.thumbWidth = 0,
     this.revision = 0,
     this.selected = false,
     this.showCheckbox = false,
@@ -537,7 +605,6 @@ class _ProjectCard extends StatefulWidget {
 class _ProjectCardState extends State<_ProjectCard> {
   String? _thumbPath;
   int _stamp = 0;
-  int _seenRevision = -1;
 
   @override
   void initState() {
@@ -566,7 +633,6 @@ class _ProjectCardState extends State<_ProjectCard> {
       }
       _stamp = stamp;
       _thumbPath = thumbFile.path;
-      _seenRevision = widget.revision;
       if (mounted) setState(() {});
     } else {
       _thumbPath = null;
@@ -581,6 +647,14 @@ class _ProjectCardState extends State<_ProjectCard> {
         child: Icon(Icons.image_outlined, size: 48, color: theme.colorScheme.onSurfaceVariant),
       ),
     );
+  }
+
+  /// Physical-pixel width used to cap thumbnail decode size. Clamped to a
+  /// sensible range regardless of the reported tile width.
+  int _thumbDecodeWidth(BuildContext context) {
+    if (widget.thumbWidth <= 0) return 300;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    return (widget.thumbWidth * dpr).round().clamp(96, 512);
   }
 
   void _showReplay(BuildContext context) async {
@@ -630,6 +704,9 @@ class _ProjectCardState extends State<_ProjectCard> {
                         fit: BoxFit.cover,
                         width: double.infinity,
                         height: double.infinity,
+                        // Decode at roughly the rendered size to keep the
+                        // grid light even with very large canvases.
+                        cacheWidth: _thumbDecodeWidth(context),
                         errorBuilder: (_, _, _) => _thumbPlaceholder(theme),
                       )
                     else

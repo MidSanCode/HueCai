@@ -245,10 +245,14 @@
   "brush.pressure_enable": "启用力度宽度",
   "brush.pressure_min": "最小力度比例",
   "brush.pressure_max": "最大力度比例",
-  "brush.vp_blend": "速度/力度混合"
-,
+  "brush.vp_blend": "速度/力度混合",
   "menu.menu": "菜单",
   "selection.lock_aspect": "锁定比例",
   "selection.new_layer": "作为新图层",
-  "selection.apply": "应用"
+  "selection.apply": "应用",
+  "workspace.delete": "删除",
+  "workspace.selected": "已选择 {count} 项",
+  "workspace.search_hint": "搜索项目…",
+  "workspace.no_results": "没有匹配的项目",
+  "workspace.folder_hint": "文件夹名称"
 }

@@ -215,13 +215,6 @@ class _DrawingContentState extends State<_DrawingContent> {
     final settings = context.watch<AppSettings>();
     return ListView(
       children: [
-        _sectionCard(theme: theme, title: 'settings.default_dpi'.tr(), children: [
-          ListTile(
-            title: Text('settings.default_dpi'.tr()),
-            subtitle: const Text('72 DPI'),
-            trailing: const Icon(Icons.chevron_right, size: 18),
-          ),
-        ]),
         _sectionCard(theme: theme, title: 'settings.stabilizer'.tr(), children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),

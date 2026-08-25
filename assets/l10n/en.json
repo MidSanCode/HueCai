@@ -245,10 +245,14 @@
   "brush.pressure_enable": "Enable Pressure Width",
   "brush.pressure_min": "Min Pressure Scale",
   "brush.pressure_max": "Max Pressure Scale",
-  "brush.vp_blend": "Velocity/Pressure Blend"
-,
+  "brush.vp_blend": "Velocity/Pressure Blend",
   "menu.menu": "Menu",
   "selection.lock_aspect": "Lock aspect",
   "selection.new_layer": "New layer",
-  "selection.apply": "Apply"
+  "selection.apply": "Apply",
+  "workspace.delete": "Delete",
+  "workspace.selected": "{count} selected",
+  "workspace.search_hint": "Search projects…",
+  "workspace.no_results": "No matching projects",
+  "workspace.folder_hint": "Folder name"
 }
