@@ -235,6 +235,11 @@ class _WheelPainter extends CustomPainter {
     (i) => HSVColor.fromAHSV(1, i.toDouble(), 1, 1).toColor(),
   );
 
+  /// Matching stops for [_ringColors]. `ui.Gradient.sweep` requires stops to
+  /// be supplied whenever more than two colors are given.
+  static final List<double> _ringStops =
+      List.generate(360, (i) => i / 359.0);
+
   @override
   void paint(Canvas canvas, Size size) {
     final cx = size.width / 2, cy = size.height / 2;
@@ -247,6 +252,7 @@ class _WheelPainter extends CustomPainter {
     final shader = ui.Gradient.sweep(
       Offset(cx, cy),
       _ringColors,
+      _ringStops,
     );
     final ringPath = Path()
       ..fillType = PathFillType.evenOdd
