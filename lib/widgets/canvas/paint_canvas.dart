@@ -605,13 +605,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
         final dt = now.difference(_lastPointerTime!).inMicroseconds / 1e6;
         final dist = (pos - _lastPointerPos!).distance;
         if (dt > 0.002) {
-          const double minVel = 200; // at or below this speed → thickest
-          const double maxVel = 3800; // at or above this speed → thinnest
+          const double minVel = 150; // at or below this speed → thickest
+          const double maxVel = 2200; // at or above this speed → thinnest
           final velocity = (dist / dt).clamp(minVel, maxVel);
           var ratio = (velocity - minVel) / (maxVel - minVel);
           // Lower exponent = reacts earlier: strokes thin out soon after
           // picking up speed (higher sensitivity).
-          ratio = pow(ratio, 0.45).toDouble();
+          ratio = pow(ratio, 0.32).toDouble();
           final range = as.velocityMaxScale - as.velocityMinScale;
           final scale = as.velocityMaxScale - ratio * range;
           widthFromVelocity = tp.brushSize * scale;

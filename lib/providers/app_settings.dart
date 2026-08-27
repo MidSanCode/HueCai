@@ -11,7 +11,7 @@ class AppSettings extends ChangeNotifier {
   bool _velocityWidthEnabled = true;
   double _velocityMinScale = 0.35;
   double _velocityMaxScale = 1.0;
-  double _velocitySmoothing = 0.6;
+  double _velocitySmoothing = 0.4;
   bool _pressureWidthEnabled = true;
   double _pressureMinScale = 0.3;
   double _pressureMaxScale = 1.0;
