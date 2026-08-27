@@ -13,9 +13,9 @@ class BrushPanel extends StatelessWidget {
     return Consumer<ToolProvider>(
       builder: (ctx, provider, _) {
         return Card(
-          margin: const EdgeInsets.all(8),
+          margin: const EdgeInsets.all(4),
           child: Padding(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(6),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,

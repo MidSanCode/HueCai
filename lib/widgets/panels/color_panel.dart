@@ -43,20 +43,20 @@ class _ColorPanelState extends State<ColorPanel> {
     final tp = widget.toolProvider;
     final activeColor = widget.currentColor ?? tp.primaryColor;
     return Card(
-      margin: const EdgeInsets.all(8),
+      margin: const EdgeInsets.all(4),
       child: Padding(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 140, height: 140,
+              width: 130, height: 130,
               child: _ColorWheel(
                 selectedColor: activeColor,
                 onChanged: _apply,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             _colorRow(theme, _defaultColors, tp, activeColor, isDefault: true),
             const SizedBox(height: 4),
             _colorRow(theme, tp.memoryColors, tp, activeColor),

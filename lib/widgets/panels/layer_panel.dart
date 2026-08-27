@@ -19,9 +19,9 @@ class LayerPanel extends StatelessWidget {
         final canMoveDown = project.currentLayerIndex > 0;
 
         return Card(
-          margin: const EdgeInsets.all(8),
+          margin: const EdgeInsets.all(4),
           child: Padding(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(6),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,

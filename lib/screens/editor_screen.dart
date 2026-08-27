@@ -399,9 +399,18 @@ class _WideLayoutState extends State<_WideLayout> {
               tooltip: 'app.hide_panels'.tr(), visualDensity: VisualDensity.compact,
               constraints: const BoxConstraints(minWidth: 28, minHeight: 28), padding: const EdgeInsets.all(4)),
           ]),
-          ColorPanel(toolProvider: toolProvider),
-          const BrushPanel(),
-          const Expanded(child: LayerPanel()),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ColorPanel(toolProvider: toolProvider),
+                  const BrushPanel(),
+                  const LayerPanel(),
+                ],
+              ),
+            ),
+          ),
         ]),
       ),
     );
