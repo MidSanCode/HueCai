@@ -735,22 +735,71 @@ class ProjectProvider extends ChangeNotifier {
 
   Future<void> applySelectionEdit() async {
     if (_selectionClipImage == null || _currentProject == null) return;
+    final project = _currentProject!;
     saveSnapshot();
+    final w = project.settings.width.toInt();
+    final h = project.settings.height.toInt();
+    // Apply the edit to the ACTIVE layer only. The previous implementation
+    // flattened the entire project into one raster, which destroyed the
+    // layer structure and let a cut punch through — or appear to move —
+    // the background layer.
+    final curIdx = project.currentLayerIndex.clamp(0, project.layers.length - 1);
+    final cur = project.layers[curIdx];
+    ui.Image base = await rasterizeLayer(cur);
+    if (_selectionCutout && _selectionSolidImage != null) {
+      // Cut: erase the selected pixels from the active layer only, so other
+      // layers (the background included) are never punched through or moved.
+      base = await _eraseWithMask(base, _selectionSolidImage!, w, h);
+    }
+    // Composite the transformed clip onto the same layer.
+    final result = await _compositeClipOnBase(base, w, h);
+    _replaceLayerContentWithImage(cur, result);
+    _hasUnsavedChanges = true;
+    // Return to an active selection session so the user can immediately
+    // keep selecting after the change is applied.
+    await restartSelectionSession();
+  }
+
+  /// Rasterizes a single layer (drawables + image content) at full canvas size.
+  Future<ui.Image> rasterizeLayer(Layer layer) async {
     final w = _currentProject!.settings.width.toInt();
     final h = _currentProject!.settings.height.toInt();
     final recorder = ui.PictureRecorder();
     final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
-    // Base: freshly rasterized layers (never a stale snapshot).
-    final base = await rasterizeCanvas();
-    if (_selectionCutout && _selectionSolidImage != null) {
-      // Cut: erase the original region, leaving only the moved clip.
-      c.drawImage(base, Offset.zero, Paint());
-      c.drawImage(_selectionSolidImage!, Offset.zero, Paint()
-        ..blendMode = BlendMode.dstOut);
-    } else {
-      // Copy: keep the original in place under the moved clip.
-      c.drawImage(base, Offset.zero, Paint());
+    for (final d in layer.drawables) {
+      d.draw(c, Paint());
     }
+    if (layer.image != null) {
+      final img = layer.image!;
+      c.save();
+      c.translate(layer.imageOffset.dx + img.width / 2, layer.imageOffset.dy + img.height / 2);
+      c.rotate(layer.imageRotation);
+      final flipX = layer.imageFlipH ? -1.0 : 1.0;
+      final flipY = layer.imageFlipV ? -1.0 : 1.0;
+      c.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+      c.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
+        Paint()..color = Colors.white.withValues(alpha: layer.opacity),
+      );
+      c.restore();
+    }
+    return recorder.endRecording().toImage(w, h);
+  }
+
+  Future<ui.Image> _eraseWithMask(ui.Image src, ui.Image mask, int w, int h) async {
+    final recorder = ui.PictureRecorder();
+    final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+    c.drawImage(src, Offset.zero, Paint());
+    c.drawImage(mask, Offset.zero, Paint()..blendMode = BlendMode.dstOut);
+    return recorder.endRecording().toImage(w, h);
+  }
+
+  Future<ui.Image> _compositeClipOnBase(ui.Image base, int w, int h) async {
+    final recorder = ui.PictureRecorder();
+    final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+    c.drawImage(base, Offset.zero, Paint());
     // Composite transformed clip image
     c.save();
     final bounds = _selectionClipBounds;
@@ -763,12 +812,45 @@ class ProjectProvider extends ChangeNotifier {
     c.translate(-bounds.center.dx, -bounds.center.dy);
     c.drawImage(_selectionClipImage!, bounds.topLeft, Paint());
     c.restore();
-    final picture = recorder.endRecording();
-    final result = await picture.toImage(w, h);
-    _replaceAllWithRaster(result);
-    _selectionPhase = SelectionPhase.none;
-    _selectionMask = null;
+    return recorder.endRecording().toImage(w, h);
+  }
+
+  /// Collapses a layer's drawables + image into a single full-canvas raster.
+  void _replaceLayerContentWithImage(Layer layer, ui.Image image) {
+    layer.image = image;
+    layer.imagePath = null;
+    layer.imageOffset = Offset.zero;
+    layer.imageRotation = 0;
+    layer.imageScale = 1.0;
+    layer.imageFlipH = false;
+    layer.imageFlipV = false;
+    layer.drawables = [];
+  }
+
+  /// Returns to a fresh selection session: clears the floating clip and edit
+  /// transforms, and re-arms the selection mask so the user can continue
+  /// selecting immediately after a change is applied.
+  Future<void> restartSelectionSession() async {
+    if (_currentProject == null) return;
+    _selectionPhase = SelectionPhase.selecting;
+    _selectionCutout = false;
+    _selectionMask = SelectionMask(
+      _currentProject!.settings.width.toInt(),
+      _currentProject!.settings.height.toInt(),
+    );
     _selectionClipImage = null;
+    _selectionClipBounds = Rect.zero;
+    _selectionOutlinePath = null;
+    _selectionMaskImage = null;
+    _selectionSolidImage = null;
+    _editScaleX = _editScaleY = 1;
+    _editRotate = 0;
+    _editTranslate = Offset.zero;
+    try {
+      _canvasSnapshot = await rasterizeCanvas();
+    } catch (_) {
+      _canvasSnapshot = null;
+    }
     notifyListeners();
   }
 
@@ -821,18 +903,6 @@ class ProjectProvider extends ChangeNotifier {
     final completer = Completer<ui.Image>();
     ui.decodeImageFromPixels(pixels, w, h, ui.PixelFormat.rgba8888, completer.complete);
     return completer.future;
-  }
-
-  void _replaceAllWithRaster(ui.Image image) {
-    if (_currentProject == null) return;
-    _currentProject!.layers.clear();
-    _currentProject!.layers.add(Layer(
-      id: _uuid.v4(),
-      name: 'Rasterized',
-      image: image,
-    ));
-    _currentProject!.currentLayerIndex = 0;
-    _hasUnsavedChanges = true;
   }
 
   void updateSelectionEditTransform({

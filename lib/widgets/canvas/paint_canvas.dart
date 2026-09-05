@@ -31,6 +31,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
   // Gesture debounce
   Offset? _downScreenPos;
   Offset? _downCanvasPos;
+  DateTime? _downTime;
   bool _dragConfirmed = false;
   bool _isScaling = false;
   DateTime? _scaleEndTime;
@@ -233,6 +234,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final canvasPos = _toCanvas(pos, areaSize);
     _downScreenPos = pos;
     _downCanvasPos = canvasPos;
+    _downTime = DateTime.now();
     _dragConfirmed = false;
     _lastPointerTime = null;
     _lastPointerPos = null;
@@ -369,8 +371,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
       _stabilizerQueue.clear();
-      _lastPointerTime = DateTime.now();
-      _lastPointerPos = pos;
+      // Seed velocity tracking from the pen-down event (not the drag-start
+      // moment) so the very first width sample of a short, quick stroke
+      // already carries the real speed of the gesture.
+      _lastPointerTime = _downTime;
+      _lastPointerPos = _downScreenPos;
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
@@ -392,8 +397,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
       _stabilizerQueue.clear();
-      _lastPointerTime = DateTime.now();
-      _lastPointerPos = pos;
+      // Seed velocity tracking from the pen-down event (not the drag-start
+      // moment) so the very first width sample of a short, quick stroke
+      // already carries the real speed of the gesture.
+      _lastPointerTime = _downTime;
+      _lastPointerPos = _downScreenPos;
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
@@ -414,8 +422,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
       _stabilizerQueue.clear();
-      _lastPointerTime = DateTime.now();
-      _lastPointerPos = pos;
+      // Seed velocity tracking from the pen-down event (not the drag-start
+      // moment) so the very first width sample of a short, quick stroke
+      // already carries the real speed of the gesture.
+      _lastPointerTime = _downTime;
+      _lastPointerPos = _downScreenPos;
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
@@ -458,8 +469,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
       _stabilizerQueue.clear();
-      _lastPointerTime = DateTime.now();
-      _lastPointerPos = pos;
+      // Seed velocity tracking from the pen-down event (not the drag-start
+      // moment) so the very first width sample of a short, quick stroke
+      // already carries the real speed of the gesture.
+      _lastPointerTime = _downTime;
+      _lastPointerPos = _downScreenPos;
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
@@ -638,6 +652,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _smoothedWidth = currentWidth;
       _lastPointerTime = now;
       _lastPointerPos = pos;
+
+      // The stroke's first point was stamped before any velocity was known;
+      // retrofit it with the first computed width so a short, quick flick
+      // thins along its whole length instead of keeping a full-width head.
+      final firstWidths = _currentDrawable!.widths;
+      if (firstWidths != null && firstWidths.length == 1) {
+        firstWidths[0] = currentWidth;
+      }
 
       final stabilizerLevel = context.read<AppSettings>().stabilizer.round();
       Offset drawPos;

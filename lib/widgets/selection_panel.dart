@@ -349,7 +349,8 @@ class _EditingContentState extends State<_EditingContent> {
             imageOffset: pp.selectionClipBounds.topLeft,
           );
           pp.currentProject?.layers.add(layer);
-          pp.clearPixelSelection();
+          pp.setCurrentLayer((pp.currentProject?.layers.length ?? 1) - 1);
+          await pp.restartSelectionSession();
         } else if (pp.hasActiveSelection) {
           // No clip yet (user skipped copy/cut): extract one, then commit.
           await pp.copySelection();
@@ -361,7 +362,8 @@ class _EditingContentState extends State<_EditingContent> {
               imageOffset: pp.selectionClipBounds.topLeft,
             );
             pp.currentProject?.layers.add(layer);
-            pp.clearPixelSelection();
+            pp.setCurrentLayer((pp.currentProject?.layers.length ?? 1) - 1);
+            await pp.restartSelectionSession();
           }
         }
         messenger.showSnackBar(SnackBar(content: Text('selection.apply'.tr())));
