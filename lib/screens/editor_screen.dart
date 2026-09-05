@@ -86,8 +86,8 @@ class _EditorScreenState extends State<EditorScreen> {
     final project = context.watch<ProjectProvider>().currentProject;
     if (project == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('No project')),
-        body: const Center(child: Text('No project open')),
+        appBar: AppBar(title: Text('editor.no_project_title'.tr())),
+        body: Center(child: Text('editor.no_project_body'.tr())),
       );
     }
 

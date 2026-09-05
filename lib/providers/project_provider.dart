@@ -201,7 +201,10 @@ class ProjectProvider extends ChangeNotifier {
     if (_currentProject == null) return;
     final layer = Layer(
       id: _uuid.v4(),
-      name: name ?? 'Layer ${_currentProject!.layers.length + 1}',
+      name: name ??
+          'layer.default_name'.tr(
+            namedArgs: {'n': '${_currentProject!.layers.length + 1}'},
+          ),
     );
     _currentProject!.layers.add(layer);
     _currentProject!.currentLayerIndex = _currentProject!.layers.length - 1;
@@ -217,12 +220,29 @@ class ProjectProvider extends ChangeNotifier {
     _markChanged();
   }
 
+  /// Removes all content (drawables and image) from the layer at [index],
+  /// keeping the layer itself.
+  void clearLayer(int index) {
+    if (_currentProject == null ||
+        index < 0 ||
+        index >= _currentProject!.layers.length) {
+      return;
+    }
+    final layer = _currentProject!.layers[index];
+    if (layer.drawables.isEmpty && layer.image == null) return;
+    saveSnapshot();
+    layer.drawables = [];
+    layer.image = null;
+    layer.imagePath = null;
+    _markChanged();
+  }
+
   void duplicateLayer(int index) {
     if (_currentProject == null) return;
     final original = _currentProject!.layers[index];
     final copy = original.copyWith(
       id: _uuid.v4(),
-      name: '${original.name} copy',
+      name: 'layer.copy_suffix'.tr(namedArgs: {'name': original.name}),
       drawables: original.drawables.map((d) => d.copyWith()).toList(),
     );
     _currentProject!.layers.insert(index + 1, copy);

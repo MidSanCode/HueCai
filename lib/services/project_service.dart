@@ -1,9 +1,10 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/project.dart';
@@ -415,7 +416,7 @@ class ProjectService {
       layers: [
         Layer(
           id: bgId,
-          name: 'Background',
+          name: 'layer.background'.tr(),
           locked: true,
           drawables: [
             Drawable(
@@ -431,7 +432,7 @@ class ProjectService {
         ),
         Layer(
           id: const Uuid().v4(),
-          name: 'Layer 1',
+          name: 'layer.default_name'.tr(namedArgs: {'n': '1'}),
         ),
       ],
       currentLayerIndex: 1,

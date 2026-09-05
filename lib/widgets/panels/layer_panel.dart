@@ -76,8 +76,15 @@ class LayerPanel extends StatelessWidget {
                         bgColor: bgColor,
                         onBgColorTap: isBg ? () => _showBgColorPicker(ctx, provider, bgColor!) : null,
                         onTap: () => provider.setCurrentLayer(idx),
-                        onDelete: () => provider.deleteLayer(idx),
-                        onDuplicate: () => provider.duplicateLayer(idx),
+                        onDelete: () {
+                          provider.saveSnapshot();
+                          provider.deleteLayer(idx);
+                        },
+                        onDuplicate: () {
+                          provider.saveSnapshot();
+                          provider.duplicateLayer(idx);
+                        },
+                        onClear: () => provider.clearLayer(idx),
                         onMergeDown: () => provider.mergeDownLayer(idx),
                         onOpacityChanged: (v) => provider.setLayerOpacity(idx, v),
                       );
@@ -100,6 +107,7 @@ class _LayerItem extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback onDelete;
   final VoidCallback onDuplicate;
+  final VoidCallback onClear;
   final VoidCallback onMergeDown;
   final ValueChanged<double> onOpacityChanged;
   final bool isBackground;
@@ -113,6 +121,7 @@ class _LayerItem extends StatefulWidget {
     required this.onTap,
     required this.onDelete,
     required this.onDuplicate,
+    required this.onClear,
     required this.onMergeDown,
     required this.onOpacityChanged,
     this.isBackground = false,
@@ -154,51 +163,121 @@ class _LayerItemState extends State<_LayerItem> {
           onTap: widget.onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                GestureDetector(
-                  onTap: () => pp.toggleLayerVisibility(widget.index),
-                  child: Icon(
-                    widget.layer.visible ? Icons.visibility : Icons.visibility_off,
-                    size: 14,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: InkWell(
-                    onDoubleTap: () {
-                      if (!widget.isBackground) _renameLayer(context, pp);
-                    },
-                    child: Text(
-                      widget.layer.name,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: widget.isCurrent ? FontWeight.w600 : FontWeight.normal,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-                if (widget.isBackground && widget.bgColor != null)
-                  GestureDetector(
-                    onTap: widget.onBgColorTap,
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      margin: const EdgeInsets.only(right: 4),
-                      decoration: BoxDecoration(
-                        color: widget.bgColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: theme.colorScheme.outline, width: 1),
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => pp.toggleLayerVisibility(widget.index),
+                      child: Icon(
+                        widget.layer.visible ? Icons.visibility : Icons.visibility_off,
+                        size: 14,
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: InkWell(
+                        onDoubleTap: () {
+                          if (!widget.isBackground) _renameLayer(context, pp);
+                        },
+                        child: Text(
+                          widget.layer.name,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: widget.isCurrent ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                    if (widget.isBackground && widget.bgColor != null)
+                      GestureDetector(
+                        onTap: widget.onBgColorTap,
+                        child: Container(
+                          width: 14,
+                          height: 14,
+                          margin: const EdgeInsets.only(right: 4),
+                          decoration: BoxDecoration(
+                            color: widget.bgColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: theme.colorScheme.outline, width: 1),
+                          ),
+                        ),
+                      ),
+                    if (widget.layer.locked)
+                      Icon(Icons.lock, size: 12, color: theme.colorScheme.onSurfaceVariant),
+                  ],
+                ),
+                // Quick actions for the current non-background layer:
+                // clear / duplicate / delete + inline opacity slider.
+                if (widget.isCurrent && !widget.isBackground)
+                  Row(
+                    children: [
+                      _quickAction(
+                        context,
+                        Icons.layers_clear,
+                        'layer.clear'.tr(),
+                        widget.onClear,
+                      ),
+                      _quickAction(
+                        context,
+                        Icons.copy,
+                        'layer.duplicate'.tr(),
+                        widget.onDuplicate,
+                      ),
+                      _quickAction(
+                        context,
+                        Icons.delete_outline,
+                        'layer.delete'.tr(),
+                        widget.onDelete,
+                      ),
+                      Expanded(
+                        child: SizedBox(
+                          height: 26,
+                          child: SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackHeight: 3,
+                              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                              overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                              padding: EdgeInsets.zero,
+                            ),
+                            child: Slider(
+                              value: widget.layer.opacity,
+                              min: 0,
+                              max: 1,
+                              onChanged: widget.onOpacityChanged,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                if (widget.layer.locked)
-                  Icon(Icons.lock, size: 12, color: theme.colorScheme.onSurfaceVariant),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _quickAction(
+    BuildContext context,
+    IconData icon,
+    String tooltip,
+    VoidCallback onTap,
+  ) {
+    final theme = Theme.of(context);
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(3),
+          child: Icon(icon, size: 15, color: theme.colorScheme.onSurfaceVariant),
         ),
       ),
     );
@@ -223,6 +302,11 @@ class _LayerItemState extends State<_LayerItem> {
         PopupMenuItem(value: 'duplicate', child: ListTile(
           leading: const Icon(Icons.copy, size: 18),
           title: Text('layer.duplicate'.tr()),
+          dense: true,
+        )),
+        PopupMenuItem(value: 'clear', child: ListTile(
+          leading: const Icon(Icons.layers_clear, size: 18),
+          title: Text('layer.clear'.tr()),
           dense: true,
         )),
         PopupMenuItem(value: 'blend', child: StatefulBuilder(
@@ -270,6 +354,7 @@ class _LayerItemState extends State<_LayerItem> {
         case 'delete': widget.onDelete();
         case 'merge': widget.onMergeDown();
         case 'duplicate': widget.onDuplicate();
+        case 'clear': widget.onClear();
       }
     });
   }
@@ -333,7 +418,7 @@ void _showBgColorPicker(BuildContext context, ProjectProvider pp, Color currentB
   showDialog(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('Background Color'),
+      title: Text('layer.bg_color'.tr()),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,

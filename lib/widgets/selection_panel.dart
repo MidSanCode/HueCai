@@ -344,7 +344,7 @@ class _EditingContentState extends State<_EditingContent> {
         if (pp.selectionClipImage != null) {
           final layer = Layer(
             id: const Uuid().v4(),
-            name: 'Selection',
+            name: 'layer.selection'.tr(),
             image: pp.selectionClipImage,
             imageOffset: pp.selectionClipBounds.topLeft,
           );
@@ -357,7 +357,7 @@ class _EditingContentState extends State<_EditingContent> {
           if (pp.selectionClipImage != null) {
             final layer = Layer(
               id: const Uuid().v4(),
-              name: 'Selection',
+              name: 'layer.selection'.tr(),
               image: pp.selectionClipImage,
               imageOffset: pp.selectionClipBounds.topLeft,
             );
