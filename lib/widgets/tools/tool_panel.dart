@@ -103,7 +103,17 @@ class _ToolPanelState extends State<ToolPanel> {
 
   Widget _toolBtn(BuildContext context, ToolType type, ToolProvider tp) {
     final theme = Theme.of(context);
-    final selected = tp.currentTool == type;
+    // Symmetry / perspective are toggles, not transient tools: they show a
+    // checked state while enabled, and picking them doesn't leave the
+    // current drawing tool.
+    final isToggle = type == ToolType.symmetry ||
+        type == ToolType.perspectiveGuide;
+    final active = isToggle
+        ? (type == ToolType.symmetry
+            ? tp.symmetryEnabled
+            : tp.perspectiveGuideEnabled)
+        : tp.currentTool == type;
+    final selected = active;
     final isBrushLike = type == ToolType.brush || type == ToolType.eraser || type == ToolType.smudge;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
@@ -115,6 +125,15 @@ class _ToolPanelState extends State<ToolPanel> {
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () {
+              if (isToggle) {
+                if (type == ToolType.symmetry) {
+                  tp.toggleSymmetry();
+                } else {
+                  tp.togglePerspectiveGuide();
+                }
+                setState(() {});
+                return;
+              }
               if (isBrushLike && selected) {
                 _showBrushMenu(context, tp);
               } else {
@@ -127,10 +146,28 @@ class _ToolPanelState extends State<ToolPanel> {
             },
             child: SizedBox(
               width: 40, height: 40,
-              child: Icon(_toolIcons[type], size: 22,
-                color: selected
-                    ? theme.colorScheme.onPrimaryContainer
-                    : theme.colorScheme.onSurfaceVariant),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Icon(_toolIcons[type], size: 22,
+                    color: selected
+                        ? theme.colorScheme.onPrimaryContainer
+                        : theme.colorScheme.onSurfaceVariant),
+                  if (isToggle && selected)
+                    Positioned(
+                      right: 2,
+                      bottom: 2,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),

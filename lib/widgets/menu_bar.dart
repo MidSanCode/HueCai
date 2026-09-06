@@ -199,9 +199,11 @@ class _FullMenuBar extends StatelessWidget {
             _MenuItem('menu.tool.stabilizer'.tr(), Icons.spa,
                 () => _showStabilizerDialog(context)),
             _MenuItem('menu.tool.symmetry'.tr(), Icons.flip,
-                () => context.read<ToolProvider>().toggleSymmetry()),
+                () => context.read<ToolProvider>().toggleSymmetry(),
+                checked: context.watch<ToolProvider>().symmetryEnabled),
             _MenuItem('menu.tool.perspective'.tr(), Icons.grid_on,
-                () => context.read<ToolProvider>().togglePerspectiveGuide()),
+                () => context.read<ToolProvider>().togglePerspectiveGuide(),
+                checked: context.watch<ToolProvider>().perspectiveGuideEnabled),
           ]),
           _MenuButton(label: 'menu.settings'.tr(), children: [
             _MenuItem('menu.settings.brush'.tr(), Icons.brush, () {
@@ -415,6 +417,9 @@ class _MenuButtonState extends State<_MenuButton> {
                   fontSize: 13,
                   color: item.enabled ? null : Theme.of(context).disabledColor,
                 )),
+              trailing: item.checked
+                  ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.primary)
+                  : null,
               dense: true,
               contentPadding: EdgeInsets.zero,
             ),
@@ -667,10 +672,11 @@ class _MenuItem extends _BaseMenuItem {
   final String label;
   final IconData icon;
   final VoidCallback? onTap;
+  final bool checked;
 
-  const _MenuItem(this.label, this.icon, this.onTap);
+  const _MenuItem(this.label, this.icon, this.onTap, {this.checked = false});
 
-  const _MenuItem.disabled(this.label, this.icon) : onTap = null;
+  const _MenuItem.disabled(this.label, this.icon) : onTap = null, checked = false;
 
   bool get enabled => onTap != null;
 }

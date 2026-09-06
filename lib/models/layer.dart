@@ -39,6 +39,10 @@ class Layer {
   String? thumbnailPath;
   List<Drawable> drawables;
 
+  /// Bumped whenever the image transform (offset/rotation/scale/flip)
+  /// changes, so the painter's raster cache knows to re-render this layer.
+  int imageVersion = 0;
+
   Layer({
     required this.id,
     required this.name,

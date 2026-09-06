@@ -181,9 +181,24 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Bumped on every content mutation; the painter's raster cache keys on
+  /// it (plus per-layer signatures) to avoid re-rendering finished layers.
+  int contentVersion = 0;
+
   void _markChanged() {
     _hasUnsavedChanges = true;
+    contentVersion++;
     notifyListeners();
+  }
+
+  /// Bumps the content version without a general notification. Used by the
+  /// canvas while a stroke is in flight: the painter caches per-layer
+  /// rasters keyed by this version, so only that layer re-rasterizes while
+  /// every other layer keeps its cached bitmap (no per-frame vector
+  /// re-render of the whole document).
+  void touchContent() {
+    _hasUnsavedChanges = true;
+    contentVersion++;
   }
 
   void refresh() {
@@ -436,6 +451,22 @@ class ProjectProvider extends ChangeNotifier {
     current.drawables.add(drawable);
     _stats.recordStroke();
     _markChanged();
+  }
+
+  /// In-stroke update: mutates the drawable in place and bumps the content
+  /// version WITHOUT notifying listeners. The canvas widget drives repaints
+  /// itself during a stroke; a full provider notification here rebuilds the
+  /// entire widget subtree (menus, panels, painter) every pointer event,
+  /// which is the main source of drawing lag.
+  void updateDrawableSilent(String drawableId, Drawable updated) {
+    if (_currentProject == null) return;
+    final current = _currentProject!.currentLayer;
+    if (current == null) return;
+    final idx = current.drawables.indexWhere((d) => d.id == drawableId);
+    if (idx != -1) {
+      current.drawables[idx] = updated;
+      touchContent();
+    }
   }
 
   void updateDrawable(String drawableId, Drawable updated) {
@@ -1029,6 +1060,15 @@ class ProjectProvider extends ChangeNotifier {
       layer.imageScale = _imagePlacingScale;
     }
     notifyListeners();
+  }
+
+  /// Marks a layer's bitmap content dirty (offset/rotation/scale changed).
+  /// The painter's raster cache for that layer is invalidated; no general
+  /// notification — placement drags repaint at 60fps via the canvas widget.
+  void touchLayerImage(Layer layer) {
+    _hasUnsavedChanges = true;
+    layer.imageVersion++;
+    contentVersion++;
   }
 
   void confirmImagePlacement() {

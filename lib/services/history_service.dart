@@ -34,6 +34,13 @@ class HistoryService {
   List<HistoryEntry> get allEntries => [..._undoStack];
 
   void pushEntry(HistoryEntry entry) {
+    // Deduplicate: identical consecutive snapshots (same project state,
+    // e.g. duplicate pushes during one gesture) waste memory and make undo
+    // feel broken (undoing appears to do nothing). Skip exact repeats.
+    if (_undoStack.isNotEmpty &&
+        identical(_undoStack.last.projectSnapshot, entry.projectSnapshot)) {
+      return;
+    }
     _undoStack.add(entry);
     _redoStack.clear();
     if (_undoStack.length > _maxHistory) {

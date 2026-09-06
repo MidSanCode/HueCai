@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../../models/project.dart';
+import '../../models/layer.dart';
 import '../../models/drawable.dart';
 import '../../models/selection_data.dart';
 import '../../providers/tool_provider.dart';
@@ -89,6 +90,90 @@ class _PaintCanvasState extends State<PaintCanvas> {
   Offset? _smudgeLast;
   Offset? _smudgePendingMove;
   double _smudgeRadius = 12;
+
+  // Perspective-guide dragging (with the move tool).
+  int? _tabDragIndex;
+
+  // Symmetry: while enabled, brush/eraser strokes commit a mirrored twin
+  // drawable on the same layer, kept in sync during the drag.
+  Drawable? _mirrorTwin;
+  double _mirrorCx = 0;
+
+  // ─── Layer raster cache ────────────────────────────────────────
+  // Finished layer content is flattened to a GPU texture once; repaints
+  // blit the texture instead of re-rendering every drawable vectorially
+  // each frame. Entries are keyed by layer id and validated against the
+  // drawable content version + image version, so any mutation invalidates
+  // exactly that layer. The layer being actively drawn is skipped while
+  // its stroke is in flight (its drawable updates every frame).
+  final Map<String, _LayerRasterEntry> _layerRasters = {};
+  final Set<String> _rasterBusy = {};
+
+  int _layerSignature(Layer layer) => layerContentVersion(layer);
+
+  void _updateLayerRasters() {
+    final project = widget.project;
+    // Drop entries for deleted layers.
+    _layerRasters.removeWhere((id, _) => !project.layers.any((l) => l.id == id));
+    for (final layer in project.layers) {
+      if (!layer.visible) continue;
+      // Small layers render fast vectorially — don't pay texture memory.
+      if (layer.drawables.length < 10 && layer.image == null) continue;
+      final version = _layerSignature(layer);
+      final entry = _layerRasters[layer.id];
+      if (entry != null && entry.version == version) continue;
+      // Never cache a layer whose stroke is mid-flight: its drawable
+      // changes every frame, the raster would be stale on arrival.
+      if (_currentDrawable != null &&
+          layer.drawables.contains(_currentDrawable)) {
+        continue;
+      }
+      if (_rasterBusy.contains(layer.id)) continue;
+      _rasterBusy.add(layer.id);
+      _rasterizeLayerCached(layer, version);
+    }
+  }
+
+  Future<void> _rasterizeLayerCached(Layer layer, int version) async {
+    try {
+      final w = widget.project.settings.width.toInt();
+      final h = widget.project.settings.height.toInt();
+      if (w <= 0 || h <= 0) return;
+      final recorder = ui.PictureRecorder();
+      final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+      if (layer.image != null) {
+        final img = layer.image!;
+        c.save();
+        c.translate(layer.imageOffset.dx + img.width / 2,
+            layer.imageOffset.dy + img.height / 2);
+        c.rotate(layer.imageRotation);
+        final flipX = layer.imageFlipH ? -1.0 : 1.0;
+        final flipY = layer.imageFlipV ? -1.0 : 1.0;
+        c.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+        c.drawImageRect(
+          img,
+          Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+          Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(),
+              img.height.toDouble()),
+          Paint(),
+        );
+        c.restore();
+      }
+      for (final d in layer.drawables) {
+        d.draw(c, Paint());
+      }
+      final raster = await recorder.endRecording().toImage(w, h);
+      final old = _layerRasters[layer.id];
+      if (old != null && !identical(old.image, raster)) old.image.dispose();
+      _layerRasters[layer.id] = _LayerRasterEntry(raster, version);
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Rasterization is best-effort; the painter falls back to vectorial
+      // rendering for this layer until the next attempt.
+    } finally {
+      _rasterBusy.remove(layer.id);
+    }
+  }
 
   Future<void> _onMagicWandTap(Offset canvasPos, ProjectProvider pp) async {
     final snap = pp.canvasSnapshot;
@@ -237,7 +322,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
         d.smudgeW = pw;
         d.smudgeH = ph;
         _smudgeState = captured;
-        pp.updateDrawable(d.id, d);
+        pp.updateDrawableSilent(d.id, d);
+        if (mounted) setState(() {});
       } else {
         captured.dispose();
       }
@@ -266,6 +352,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _smudgeLast = canvasPos;
     d.points.add(canvasPos);
     if (d.widths != null) d.widths!.add(d.widths!.last);
+    d.contentVersion++;
     _smudgeWarp(canvasPos, delta, pp);
   }
 
@@ -300,7 +387,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
       d.smudgeSource = current;
       d.smudgeW = w;
       d.smudgeH = h;
-      pp.updateDrawable(d.id, d);
+      d.contentVersion++;
+      pp.updateDrawableSilent(d.id, d);
+      if (mounted) setState(() {});
       if (!identical(src, current)) src.dispose();
     } catch (_) {
       if (!identical(current, src)) current.dispose();
@@ -399,6 +488,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _liquifyLast = canvasPos;
     d.points.add(canvasPos);
     d.widths!.add(tp.brushSize);
+    d.contentVersion++;
     _liquifyWarp(canvasPos, delta, pp);
   }
 
@@ -464,7 +554,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _liquifyWarped = true;
       if (old != null && !identical(old, _liquifyBase)) old.dispose();
       d.liquifyImage = current;
-      pp.updateDrawable(d.id, d);
+      d.contentVersion++;
+      pp.updateDrawableSilent(d.id, d);
+      // The warp completes after the pointer event's repaint; refresh so
+      // the smeared result shows immediately.
+      if (mounted) setState(() {});
     } catch (_) {
       if (!identical(current, src)) current.dispose();
     } finally {
@@ -633,6 +727,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
+    if (tp.currentTool == ToolType.eyedropper) {
+      // Sample the flattened canvas colour under the pointer and make it
+      // the primary colour (with a memory-chip entry), like PS's eyedropper.
+      if (!_isOnCanvas(canvasPos)) return;
+      await _pickColorAt(canvasPos, tp, pp);
+      return;
+    }
+
     if (tp.currentTool == ToolType.select) {
       if (pp.selectionPhase == SelectionPhase.editing) {
         // In edit mode, check for transform handle hit
@@ -696,6 +798,29 @@ class _PaintCanvasState extends State<PaintCanvas> {
       } finally {
         snap?.dispose();
       }
+      return;
+    }
+
+    if (tp.currentTool == ToolType.pen) {
+      // Vector pen: taps lay anchors, dragging extends a smooth quadratic
+      // path (drawn by the drawable itself). No width dynamics — pen marks
+      // stay crisp and constant-width, like a technical pen.
+      if (!_isOnCanvas(canvasPos)) return;
+      final layer = widget.project.layers[widget.project.currentLayerIndex
+          .clamp(0, widget.project.layers.length - 1)];
+      if (layer.locked) return;
+      pp.saveSnapshot();
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        points: [canvasPos],
+        color: tp.primaryColor,
+        strokeWidth: max(0.5, tp.brushSize * 0.35),
+        opacity: tp.brushOpacity,
+        isPen: true,
+      );
+      _currentDrawable = drawable;
+      pp.addDrawable(drawable);
+      _dragConfirmed = true;
       return;
     }
 
@@ -772,6 +897,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
 
     if (tp.currentTool == ToolType.move) {
+      // Perspective guide: dragging a vanishing-point handle (move tool).
+      final handle = _perspectiveHandleAt(canvasPos, tp);
+      if (handle != null) {
+        _tabDragIndex = handle;
+        return;
+      }
       final hit = _hitTest(canvasPos);
       if (hit != null) {
         pp.selectDrawable(hit);
@@ -781,6 +912,93 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
     // Brush/eraser/shape (rect/ellipse) start is deferred to _tryBeginDrag
+  }
+
+  /// Creates (or clears) the symmetry mirror twin for a new stroke.
+  void _syncMirrorTwin(ToolProvider tp, ProjectProvider pp, Offset canvasPos) {
+    if (!tp.symmetryEnabled) {
+      _mirrorTwin = null;
+      return;
+    }
+    _mirrorCx = widget.project.settings.width / 2;
+    final d = _currentDrawable!;
+    final twin = d.copyWith(
+      id: const Uuid().v4(),
+      points: [Offset(_mirrorCx * 2 - canvasPos.dx, canvasPos.dy)],
+      widths: d.widths == null ? null : List<double>.from(d.widths!),
+      alphas: d.alphas == null ? null : List<double>.from(d.alphas!),
+      selected: false,
+    );
+    twin.smudgeSource = null;
+    twin.isSmudge = false;
+    _mirrorTwin = twin;
+    pp.addDrawable(twin);
+  }
+
+  /// Rebuilds the mirror twin from the primary stroke's current points.
+  void _updateMirrorTwin(ProjectProvider pp) {
+    final twin = _mirrorTwin;
+    final main = _currentDrawable;
+    if (twin == null || main == null) return;
+    twin.points = [
+      for (final p in main.points) Offset(_mirrorCx * 2 - p.dx, p.dy),
+    ];
+    twin.widths =
+        main.widths == null ? null : List<double>.from(main.widths!);
+    twin.alphas = main.alphas == null ? null : List<double>.from(main.alphas!);
+    twin.contentVersion++;
+    pp.updateDrawableSilent(twin.id, twin);
+  }
+
+  // ─── Perspective guide ─────────────────────────────────────────
+  // Up to 3 vanishing points, each casting a fan of rays across the
+  // document (PS-style perspective guides). Draggable with the move tool;
+  // purely an overlay — never serialized or drawn into exports.
+
+  static const int _perspectiveMaxPoints = 3;
+  final List<Offset> _perspectivePoints = [];
+
+  Offset _defaultPerspectivePoint(int i, double w, double h) => switch (i) {
+        0 => Offset(w * 0.25, h * 0.25),
+        1 => Offset(w * 0.75, h * 0.25),
+        _ => Offset(w * 0.5, h * 0.75),
+      };
+
+  void _ensurePerspectivePoints() {
+    final w = widget.project.settings.width.toDouble();
+    final h = widget.project.settings.height.toDouble();
+    while (_perspectivePoints.length < _perspectiveMaxPoints) {
+      _perspectivePoints
+          .add(_defaultPerspectivePoint(_perspectivePoints.length, w, h));
+    }
+  }
+
+  List<Offset> _perspectiveViewPoints() {
+    _ensurePerspectivePoints();
+    return List<Offset>.unmodifiable(_perspectivePoints);
+  }
+
+  int? _perspectiveHandleAt(Offset canvasPos, ToolProvider tp) {
+    if (!tp.perspectiveGuideEnabled) return null;
+    _ensurePerspectivePoints();
+    for (int i = 0; i < _perspectivePoints.length; i++) {
+      if ((_perspectivePoints[i] - canvasPos).distance <= 24) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  void _movePerspectiveHandle(Offset canvasPos) {
+    final i = _tabDragIndex;
+    if (i == null || i >= _perspectivePoints.length) return;
+    final w = widget.project.settings.width.toDouble();
+    final h = widget.project.settings.height.toDouble();
+    _perspectivePoints[i] = Offset(
+      canvasPos.dx.clamp(-w * 0.5, w * 1.5),
+      canvasPos.dy.clamp(-h * 0.5, h * 1.5),
+    );
+    setState(() {});
   }
 
   /// Text tool: ask for the string, then commit a text drawable anchored at
@@ -801,6 +1019,71 @@ class _PaintCanvasState extends State<PaintCanvas> {
     );
     pp.addDrawable(drawable);
     pp.refresh();
+  }
+
+  /// Eyedropper: samples the flattened canvas at [canvasPos] (cached layer
+  /// rasters when fresh, else a one-off vector rasterization) and promotes
+  /// the colour to primary + memory chips.
+  Future<void> _pickColorAt(
+      Offset canvasPos, ToolProvider tp, ProjectProvider pp) async {
+    final w = widget.project.settings.width.toInt();
+    final h = widget.project.settings.height.toInt();
+    final px = canvasPos.dx.floor().clamp(0, w - 1);
+    final py = canvasPos.dy.floor().clamp(0, h - 1);
+    ui.Image? flat;
+    // Prefer composing from the cached rasters (already validated fresh).
+    final needRaster = widget.project.layers.any((l) =>
+        l.visible &&
+        !_layerRasters.containsKey(l.id));    if (needRaster) {
+      try {
+        flat = await pp.rasterizeCanvas();
+      } catch (_) {
+        return;
+      }
+    }
+    ui.Image? composite;
+    if (flat == null) {
+      // Compose the visible cached layers onto a scratch canvas.
+      final recorder = ui.PictureRecorder();
+      final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+      final bg = Color(widget.project.settings.backgroundColor);
+      if (bg.a > 0) {
+        c.drawRect(Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+            Paint()..color = bg);
+      }
+      for (final layer in widget.project.layers) {
+        if (!layer.visible) continue;
+        final entry = _layerRasters[layer.id];
+        if (entry != null && entry.version == layerContentVersion(layer)) {
+          c.drawImage(
+              entry.image,
+              Offset.zero,
+              Paint()..color = Colors.white.withValues(alpha: layer.opacity));
+        } else {
+          for (final d in layer.drawables) {
+            d.draw(c, Paint());
+          }
+        }
+      }
+      composite = await recorder.endRecording().toImage(w, h);
+    }
+    final img = flat ?? composite;
+    if (img == null) return;
+    try {
+      final bd = await img.toByteData();
+      if (bd == null) return;
+      final bytes = bd.buffer.asUint8List();
+      final idx = (py * img.width + px) * 4;
+      if (idx + 3 >= bytes.length) return;
+      final color = Color.fromARGB(bytes[idx + 3], bytes[idx],
+          bytes[idx + 1], bytes[idx + 2]);
+      tp.setPrimaryColor(color);
+      tp.addMemoryColor(color);
+      _log.info('eyedropper picked #$color at ($px, $py)');
+    } finally {
+      flat?.dispose();
+      composite?.dispose();
+    }
   }
 
   void _tryBeginDrag(Offset pos, Size areaSize, {Offset? canvasStart}) {
@@ -965,6 +1248,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
       _dragConfirmed = true;
+      // Symmetry: create a mirrored twin drawable that is driven point by
+      // point while the primary stroke advances.
+      _syncMirrorTwin(tp, pp, canvasPos);
     } else if (tp.currentTool == ToolType.shape) {
       _isPlacingShapePoints = false;
       pp.saveSnapshot();
@@ -989,6 +1275,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
 
+    // Move tool: drag a perspective vanishing-point handle if grabbed.
+    if (tp.currentTool == ToolType.move) {
+      if (tp.perspectiveGuideEnabled && _tabDragIndex != null) {
+        _movePerspectiveHandle(canvasPos);
+        return;
+      }
+      return;
+    }
+
     // Image placement: move the image
     if (pp.isPlacingImage && _imagePlaceStartPos != null && _imagePlaceStartOffset != null) {
       final delta = pos - _imagePlaceStartPos!;
@@ -1008,7 +1303,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (_currentDrawable != null) {
         // Keep both endpoints tracking the pointer while dragging.
         _currentDrawable!.points = [_gradientStart!, canvasPos];
-        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+        _currentDrawable!.contentVersion++;
+        pp.updateDrawableSilent(_currentDrawable!.id, _currentDrawable!);
       } else {
         final drawable = Drawable(
           id: const Uuid().v4(),
@@ -1070,7 +1366,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
       }
       if (_currentDrawable != null) {
         _currentDrawable!.points = [_selectStart!, canvasPos];
-        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+        _currentDrawable!.contentVersion++;
+        pp.updateDrawableSilent(_currentDrawable!.id, _currentDrawable!);
       }
       return;
     }
@@ -1083,6 +1380,18 @@ class _PaintCanvasState extends State<PaintCanvas> {
       // exactly under the pointer instead of jumping to the threshold point.
       _tryBeginDrag(pos, areaSize, canvasStart: _downCanvasPos);
       if (_currentDrawable == null) return;
+    }
+
+    if (tp.currentTool == ToolType.pen && _currentDrawable != null) {
+      // Extend the pen path with min-distance filtering; the drawable
+      // renders anchors as a smoothed quadratic curve.
+      final d = _currentDrawable!;
+      final last = d.points.last;
+      if ((canvasPos - last).distance < 2.0) return;
+      d.points.add(canvasPos);
+      d.contentVersion++;
+      pp.updateDrawableSilent(d.id, d);
+      return;
     }
 
     if (tp.currentTool == ToolType.liquify) {
@@ -1221,16 +1530,20 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _currentDrawable!.points.add(drawPos);
     _currentDrawable!.widths!.add(currentWidth);
     if (usesInk) _currentDrawable!.alphas!.add(inkFromVelocity);
-    pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+    _currentDrawable!.contentVersion++;
+    pp.updateDrawableSilent(_currentDrawable!.id, _currentDrawable!);
+    if (_mirrorTwin != null) _updateMirrorTwin(pp);
     } else if (tp.currentTool == ToolType.shape) {
       if (tp.currentShape == ShapeType.curve) {
         // Curve: accumulate all points during drag
         _currentDrawable!.points.add(canvasPos);
-        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+        _currentDrawable!.contentVersion++;
+        pp.updateDrawableSilent(_currentDrawable!.id, _currentDrawable!);
       } else {
         final snapped = _snapShapeEnd(tp, canvasPos);
         _currentDrawable!.points = [_currentDrawable!.points.first, snapped];
-        pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
+        _currentDrawable!.contentVersion++;
+        pp.updateDrawableSilent(_currentDrawable!.id, _currentDrawable!);
       }
     }
   }
@@ -1296,6 +1609,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
     // If drag was never confirmed, discard the pending drawable
     if (!_dragConfirmed && _currentDrawable != null) {
       pp.deleteDrawable(_currentDrawable!.id);
+      if (_mirrorTwin != null) {
+        pp.deleteDrawable(_mirrorTwin!.id);
+      }
       _currentDrawable = null;
     } else if (_currentDrawable != null) {
       if (_currentDrawable!.isShape) {
@@ -1310,6 +1626,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _downScreenPos = null;
     _downCanvasPos = null;
     _dragConfirmed = false;
+    _mirrorTwin = null;
+    _tabDragIndex = null;
   }
 
   void _cancelMultiClickShape() {
@@ -1382,10 +1700,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final tp = context.watch<ToolProvider>();
     final cp = context.watch<CanvasProvider>();
     final pp = context.watch<ProjectProvider>();
+    // Fire-and-forget: refresh per-layer raster caches for any layer whose
+    // content changed since its last rasterization.
+    _updateLayerRasters();
     final isMoveTool = tp.currentTool == ToolType.move;
     final hasSelection = pp.selectedDrawable != null;
     final isDrawingTool = tp.currentTool == ToolType.brush ||
         tp.currentTool == ToolType.eraser ||
+        tp.currentTool == ToolType.pen ||
         tp.currentTool == ToolType.shape ||
         tp.currentTool == ToolType.gradient ||
         tp.currentTool == ToolType.fill ||
@@ -1401,6 +1723,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
         final areaSize = Size(constraints.maxWidth, constraints.maxHeight);
         return Listener(
           onPointerMove: (event) {
+            _currentPressure = event.pressure;
+          },
+          onPointerHover: (event) {
             _currentPressure = event.pressure;
           },
           onPointerDown: (event) {
@@ -1425,6 +1750,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
                 // Cancel any pending single-finger drawing state
                 _downScreenPos = null;
                 _dragConfirmed = false;
+                _tabDragIndex = null;
                 if (tp.currentTool == ToolType.liquify) {
                   _cancelLiquify(pp);
                 } else if (tp.currentTool == ToolType.smudge) {
@@ -1439,7 +1765,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
                   DateTime.now().difference(_scaleEndTime!) < _scaleCooldown) {
                 return;
               }
-              if (!isMoveTool || hasSelection) {
+              // Move tool normally pans, but with the perspective guide on
+              // it must hit-test the vanishing-point handles first.
+              final perspReady =
+                  isMoveTool && tp.perspectiveGuideEnabled && !hasSelection;
+              if (!isMoveTool || hasSelection || perspReady) {
                 _onPointerDown(details.localFocalPoint, areaSize);
               }
             },
@@ -1457,12 +1787,21 @@ class _PaintCanvasState extends State<PaintCanvas> {
                   return;
                 }
                 if (isMoveTool && !hasSelection) {
-                  final delta = details.focalPointDelta;
-                  if (delta.distance > 2.0) {
-                    cp.panBy(delta);
+                  if (tp.perspectiveGuideEnabled && _tabDragIndex != null) {
+                    // Dragging a vanishing-point handle, not panning.
+                    _onPointerMove(details.localFocalPoint, areaSize);
+                  } else {
+                    final delta = details.focalPointDelta;
+                    if (delta.distance > 2.0) {
+                      cp.panBy(delta);
+                    }
                   }
                 } else if (isDrawingTool) {
                   _onPointerMove(details.localFocalPoint, areaSize);
+                  // In-stroke updates bump the content version silently
+                  // (updateDrawableSilent); repaint here without rebuilding
+                  // the whole provider tree every pointer event.
+                  setState(() {});
                 }
               }
             },
@@ -1501,6 +1840,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
                         painter: _CanvasPainter(
                           project: widget.project,
                           currentDrawable: _currentDrawable,
+                          layerRasters: _layerRasters,
+                          mirrorEnabled: tp.symmetryEnabled,
+                          perspectiveEnabled: tp.perspectiveGuideEnabled,
+                          perspectivePoints: tp.perspectiveGuideEnabled
+                              ? _perspectiveViewPoints()
+                              : const [],
                           selectionMaskImage: pp.selectionMaskImage,
                           selectionClipImage: pp.selectionClipImage,
                           selectionClipBounds: pp.selectionClipBounds,
@@ -1532,7 +1877,32 @@ class _PaintCanvasState extends State<PaintCanvas> {
       },
     );
   }
+
+  @override
+  void dispose() {
+    for (final entry in _layerRasters.values) {
+      entry.image.dispose();
+    }
+    _layerRasters.clear();
+    super.dispose();
+  }
 }
+
+/// Cached full-canvas raster of one layer's drawables (+ baked image).
+class _LayerRasterEntry {
+  final ui.Image image;
+  final int version;
+  _LayerRasterEntry(this.image, this.version);
+}
+
+/// Stable signature of a layer's rendered content: any drawable edit or
+/// image-transform change bumps it, so the raster cache knows to rebuild.
+int layerContentVersion(Layer layer) => Object.hashAll([
+      layer.drawables.length,
+      for (final d in layer.drawables) d.contentVersion,
+      identityHashCode(layer.image),
+      layer.imageVersion,
+    ]);
 
 class _BackgroundPainter extends CustomPainter {
   @override
@@ -1550,6 +1920,10 @@ class _BackgroundPainter extends CustomPainter {
 class _CanvasPainter extends CustomPainter {
   final Project project;
   final Drawable? currentDrawable;
+  final Map<String, _LayerRasterEntry> layerRasters;
+  final bool mirrorEnabled;
+  final bool perspectiveEnabled;
+  final List<Offset> perspectivePoints;
   final ui.Image? selectionMaskImage;
   final ui.Image? selectionClipImage;
   final Rect selectionClipBounds;
@@ -1567,6 +1941,10 @@ class _CanvasPainter extends CustomPainter {
   _CanvasPainter({
     required this.project,
     this.currentDrawable,
+    this.layerRasters = const {},
+    this.mirrorEnabled = false,
+    this.perspectiveEnabled = false,
+    this.perspectivePoints = const [],
     this.selectionMaskImage,
     this.selectionClipImage,
     this.selectionClipBounds = Rect.zero,
@@ -1602,6 +1980,18 @@ class _CanvasPainter extends CustomPainter {
 
     for (final layer in project.layers) {
       if (!layer.visible) continue;
+      final drawingHere = currentDrawable != null &&
+          layer.drawables.contains(currentDrawable);
+      final entry = layerRasters[layer.id];
+      if (entry != null && !drawingHere && entry.version == layerContentVersion(layer)) {
+        // Fast path: blit the cached layer texture.
+        canvas.drawImage(entry.image, Offset.zero,
+            Paint()..color = Colors.white.withValues(alpha: layer.opacity));
+        for (final d in layer.drawables) {
+          if (d.selected) _drawSelectionHandles(canvas, d);
+        }
+        continue;
+      }
       if (layer.image != null) {
         final img = layer.image!;
         canvas.save();
@@ -1665,6 +2055,41 @@ class _CanvasPainter extends CustomPainter {
               ..color = Colors.black.withValues(alpha: 0.8),
           );
         }
+      }
+    }
+
+    // Perspective guide overlay: rays fanning out from each vanishing
+    // point plus a draggable handle dot. Pure overlay (not serialized).
+    if (perspectiveEnabled) {
+      const rays = 12;
+      const handleR = 9.0;
+      final guidePaint = Paint()
+        ..color = const Color(0xFF38BDF8).withValues(alpha: 0.30)
+        ..strokeWidth = 1.0 / viewScale;
+      for (final vp in perspectivePoints) {
+        final path = ui.Path();
+        for (int r = 0; r < rays; r++) {
+          final angle = r * 2 * pi / rays;
+          final far = Offset(
+            vp.dx + cos(angle) * 20000,
+            vp.dy + sin(angle) * 20000,
+          );
+          path.moveTo(vp.dx, vp.dy);
+          path.lineTo(far.dx, far.dy);
+        }
+        canvas.drawPath(path, guidePaint);
+      }
+      for (final vp in perspectivePoints) {
+        canvas.drawCircle(
+            vp, handleR / viewScale, Paint()..color = Colors.white);
+        canvas.drawCircle(
+          vp,
+          handleR / viewScale,
+          Paint()
+            ..color = const Color(0xFF0EA5E9)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0 / viewScale,
+        );
       }
     }
 

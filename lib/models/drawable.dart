@@ -40,6 +40,10 @@ class GradientStop {
 }
 
 class Drawable {
+  /// Bumped by the canvas on every in-stroke mutation. The painter's layer
+  /// raster cache keys on this, so only the layer being drawn re-rasterizes
+  /// when a stroke ends — finished layers keep their cached texture.
+  int contentVersion = 0;
   final String id;
   final bool isShape;
   final ShapeType? shapeType;
@@ -61,6 +65,7 @@ class Drawable {
   double gradientAngle;
   List<LeafData>? leaves;
   bool isSmudge;
+  bool isPen;
   ui.Image? smudgeSource;
   int smudgeW = 0;
   int smudgeH = 0;
@@ -93,6 +98,7 @@ class Drawable {
     this.gradientAngle = 0.0,
     this.leaves,
     this.isSmudge = false,
+    this.isPen = false,
     this.isLiquify = false,
     this.alphas,
     this.liquifyImage,
@@ -207,6 +213,27 @@ class Drawable {
       return;
     }
 
+    if (isPen) {
+      // Vector pen: crisp constant-width quadratic-smoothed path through
+      // the anchors. One path + one paint regardless of anchor count.
+      if (points.length == 1) {
+        canvas.drawCircle(points.first, max(0.4, strokeWidth * 0.5), p);
+        return;
+      }
+      final path = ui.Path()..moveTo(points.first.dx, points.first.dy);
+      if (points.length == 2) {
+        path.lineTo(points.last.dx, points.last.dy);
+      } else {
+        for (int i = 1; i < points.length - 1; i++) {
+          final mid = Offset.lerp(points[i], points[i + 1], 0.5)!;
+          path.quadraticBezierTo(points[i].dx, points[i].dy, mid.dx, mid.dy);
+        }
+        path.lineTo(points.last.dx, points.last.dy);
+      }
+      canvas.drawPath(path, p);
+      return;
+    }
+
     if (leaves != null) {
       _drawLeaves(canvas, p);
       return;
@@ -273,6 +300,7 @@ class Drawable {
     List<double>? widths,
     List<double>? alphas,
     Color? color,
+    bool? isPen,
     double? strokeWidth,
     double? opacity,
     bool? isFilled,
@@ -296,6 +324,7 @@ class Drawable {
         widths: widths ?? (this.widths != null ? List.from(this.widths!) : null),
         alphas: alphas ?? (this.alphas != null ? List.from(this.alphas!) : null),
         color: color ?? this.color,
+        isPen: isPen ?? this.isPen,
         strokeWidth: strokeWidth ?? this.strokeWidth,
         opacity: opacity ?? this.opacity,
         isFilled: isFilled ?? this.isFilled,
@@ -473,15 +502,15 @@ class Drawable {
     }
 
     if (widths != null && widths!.length >= points.length) {
+      final segPaint = Paint()
+        ..color = paint.color
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke
+        ..shader = paint.shader;
       for (int i = 0; i < points.length - 1; i++) {
-        final p = Paint()
-          ..color = paint.color
-          ..strokeWidth = widths![i]
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round
-          ..style = PaintingStyle.stroke
-          ..shader = paint.shader;
-        canvas.drawLine(points[i], points[i + 1], p);
+        segPaint.strokeWidth = widths![i];
+        canvas.drawLine(points[i], points[i + 1], segPaint);
       }
     } else {
       final path = ui.Path()..moveTo(points.first.dx, points.first.dy);
