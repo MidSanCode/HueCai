@@ -240,6 +240,8 @@
   "brush.velocity_min": "Min Scale",
   "brush.velocity_max": "Max Scale",
   "brush.velocity_smooth": "Smoothing",
+  "brush.velocity_ink": "Ink Follows Velocity",
+  "brush.velocity_ink_min": "Min Ink",
   "workspace.rename": "Rename",
   "workspace.new_folder": "New Folder",
   "workspace.move_to": "Move to Folder",

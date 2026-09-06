@@ -240,6 +240,8 @@
   "brush.velocity_min": "最细比例",
   "brush.velocity_max": "最粗比例",
   "brush.velocity_smooth": "平滑度",
+  "brush.velocity_ink": "墨量随速度（毛笔）",
+  "brush.velocity_ink_min": "最少墨量",
   "workspace.rename": "重命名",
   "workspace.new_folder": "新建文件夹",
   "workspace.move_to": "移动到文件夹",

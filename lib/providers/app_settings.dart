@@ -12,6 +12,8 @@ class AppSettings extends ChangeNotifier {
   double _velocityMinScale = 0.35;
   double _velocityMaxScale = 1.0;
   double _velocitySmoothing = 0.4;
+  bool _velocityInkEnabled = true;
+  double _velocityInkMinScale = 0.45;
   bool _pressureWidthEnabled = true;
   double _pressureMinScale = 0.3;
   double _pressureMaxScale = 1.0;
@@ -29,6 +31,8 @@ class AppSettings extends ChangeNotifier {
   double get velocityMinScale => _velocityMinScale;
   double get velocityMaxScale => _velocityMaxScale;
   double get velocitySmoothing => _velocitySmoothing;
+  bool get velocityInkEnabled => _velocityInkEnabled;
+  double get velocityInkMinScale => _velocityInkMinScale;
   bool get pressureWidthEnabled => _pressureWidthEnabled;
   double get pressureMinScale => _pressureMinScale;
   double get pressureMaxScale => _pressureMaxScale;
@@ -63,6 +67,8 @@ class AppSettings extends ChangeNotifier {
         _velocityMinScale = (json['velocityMinScale'] as num?)?.toDouble() ?? 0.35;
         _velocityMaxScale = (json['velocityMaxScale'] as num?)?.toDouble() ?? 1.0;
         _velocitySmoothing = (json['velocitySmoothing'] as num?)?.toDouble() ?? 0.6;
+        _velocityInkEnabled = json['velocityInkEnabled'] as bool? ?? true;
+        _velocityInkMinScale = (json['velocityInkMinScale'] as num?)?.toDouble() ?? 0.45;
         _pressureWidthEnabled = json['pressureWidthEnabled'] as bool? ?? true;
         _pressureMinScale = (json['pressureMinScale'] as num?)?.toDouble() ?? 0.3;
         _pressureMaxScale = (json['pressureMaxScale'] as num?)?.toDouble() ?? 1.0;
@@ -87,6 +93,8 @@ class AppSettings extends ChangeNotifier {
         'velocityMinScale': _velocityMinScale,
         'velocityMaxScale': _velocityMaxScale,
         'velocitySmoothing': _velocitySmoothing,
+        'velocityInkEnabled': _velocityInkEnabled,
+        'velocityInkMinScale': _velocityInkMinScale,
         'pressureWidthEnabled': _pressureWidthEnabled,
         'pressureMinScale': _pressureMinScale,
         'pressureMaxScale': _pressureMaxScale,
@@ -118,6 +126,8 @@ class AppSettings extends ChangeNotifier {
   void setVelocityMinScale(double v) { _velocityMinScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setVelocityMaxScale(double v) { _velocityMaxScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setVelocitySmoothing(double v) { _velocitySmoothing = v.clamp(0.0, 1.0); _save(); notifyListeners(); }
+  void setVelocityInkEnabled(bool v) { _velocityInkEnabled = v; _save(); notifyListeners(); }
+  void setVelocityInkMinScale(double v) { _velocityInkMinScale = v.clamp(0.05, 1.0); _save(); notifyListeners(); }
   void setPressureWidthEnabled(bool v) { _pressureWidthEnabled = v; _save(); notifyListeners(); }
   void setPressureMinScale(double v) { _pressureMinScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setPressureMaxScale(double v) { _pressureMaxScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }

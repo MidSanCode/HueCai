@@ -847,6 +847,22 @@ class ProjectProvider extends ChangeNotifier {
     layer.drawables = [];
   }
 
+  /// Bakes a finished liquify warp: the warped raster becomes the layer's
+  /// image content. The pre-drag content is already inside the warp result,
+  /// so the stashed drawables/image are dropped (the canvas widget cleared
+  /// them before the drag started).
+  Future<void> bakeLiquifyResult(Layer layer, ui.Image warped) async {
+    _replaceLayerContentWithImage(layer, warped);
+    _hasUnsavedChanges = true;
+    notifyListeners();
+  }
+
+  /// Flags the project as dirty without touching content (used by canvas
+  /// gestures that mutate layer objects directly).
+  void markUnsavedChanges() {
+    _hasUnsavedChanges = true;
+  }
+
   /// Returns to a fresh selection session: clears the floating clip and edit
   /// transforms, and re-arms the selection mask so the user can continue
   /// selecting immediately after a change is applied.

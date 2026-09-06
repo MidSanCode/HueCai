@@ -63,6 +63,25 @@ class _PaintCanvasState extends State<PaintCanvas> {
   int? _warpDragIndex;
   Offset? _editMoveStart;
 
+  // Liquify state: the base image is a raster of the active layer taken at
+  // pen-down; each drag segment re-warps the previous result so content
+  // actually smears with the pointer.
+  ui.Image? _liquifyBase;
+  ui.Image? _liquifyResult;
+  Offset? _liquifyLast;
+  double _liquifyRadius = 24;
+  bool _liquifyWarped = false;
+  Offset? _liquifyPendingMove;
+  bool _liquifyCommitting = false;
+  ui.Image? _liqStashImage;
+  Offset _liqStashImageOffset = Offset.zero;
+  double _liqStashImageRotation = 0;
+  double _liqStashImageScale = 1.0;
+  bool _liqStashImageFlipH = false;
+  bool _liqStashImageFlipV = false;
+  List<Drawable> _liqStashDrawables = [];
+  bool _liquifyWarpBusy = false;
+
   Future<void> _onMagicWandTap(Offset canvasPos, ProjectProvider pp) async {
     final snap = pp.canvasSnapshot;
     if (snap == null) return;
@@ -205,6 +224,227 @@ class _PaintCanvasState extends State<PaintCanvas> {
         canvasPos.dy >= 0 &&
         canvasPos.dx <= widget.project.settings.width &&
         canvasPos.dy <= widget.project.settings.height;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Liquify: real pixel dragging.
+  //
+  // The active layer is rasterized at pen-down. Each drag segment stamps a
+  // displacement warp onto that raster: concentric rings sample the image
+  // progressively further behind the pointer, so content near the cursor is
+  // pulled along the drag direction with a smooth radial falloff — the
+  // classic "forward warp" behaviour instead of painted dots.
+  // ---------------------------------------------------------------------------
+
+  void _onLiquifyMove(Offset canvasPos, ProjectProvider pp, ToolProvider tp) {
+    final d = _currentDrawable;
+    if (d == null || _liquifyCommitting) return;
+    if (_liquifyBase == null || _liquifyWarpBusy) {
+      // Base raster not ready yet (capture is async) or a warp render is
+      // still in flight; remember the newest position so the next warp
+      // catches up with the pointer.
+      _liquifyPendingMove = canvasPos;
+      return;
+    }
+    final last = _liquifyLast ?? canvasPos;
+    final delta = canvasPos - last;
+    if (delta.distance < 0.5) return;
+    _liquifyLast = canvasPos;
+    d.points.add(canvasPos);
+    d.widths!.add(tp.brushSize);
+    _liquifyWarp(canvasPos, delta, pp);
+  }
+
+  /// Rasterizes the stashed (original) layer content as the warp base.
+  Future<ui.Image> _rasterizeLiquifyBase() async {
+    final w = widget.project.settings.width.toInt();
+    final h = widget.project.settings.height.toInt();
+    final recorder = ui.PictureRecorder();
+    final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+    for (final d in _liqStashDrawables) {
+      d.draw(c, Paint());
+    }
+    final img = _liqStashImage;
+    if (img != null) {
+      c.save();
+      c.translate(
+          _liqStashImageOffset.dx + img.width / 2,
+          _liqStashImageOffset.dy + img.height / 2);
+      c.rotate(_liqStashImageRotation);
+      final flipX = _liqStashImageFlipH ? -1.0 : 1.0;
+      final flipY = _liqStashImageFlipV ? -1.0 : 1.0;
+      c.scale(_liqStashImageScale * flipX, _liqStashImageScale * flipY);
+      c.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromLTWH(
+            -img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
+        Paint(),
+      );
+      c.restore();
+    }
+    return recorder.endRecording().toImage(w, h);
+  }
+
+  Future<void> _liquifyWarp(Offset center, Offset delta, ProjectProvider pp) async {
+    final src = _liquifyResult;
+    if (src == null) return;
+    final w = widget.project.settings.width.toInt();
+    final h = widget.project.settings.height.toInt();
+    final radius = _liquifyRadius;
+    // Subdivide long jumps so ring seams stay sub-pixel.
+    final dist = delta.distance;
+    final steps = (dist / (radius * 0.5)).ceil().clamp(1, 4);
+    ui.Image current = src;
+    _liquifyWarpBusy = true;
+    try {
+      for (int s = 1; s <= steps; s++) {
+        final t = s / steps;
+        final target = Offset.lerp(center - delta, center, t)!;
+        final stepDelta = delta / steps.toDouble();
+        current = await _liquifyWarpOnce(current, target, stepDelta, radius, w, h);
+      }
+      final d = _currentDrawable;
+      if (!mounted || d == null || _liquifyCommitting) {
+        if (!identical(current, src)) current.dispose();
+        return;
+      }
+      final old = _liquifyResult;
+      _liquifyResult = current;
+      _liquifyWarped = true;
+      if (old != null && !identical(old, _liquifyBase)) old.dispose();
+      d.liquifyImage = current;
+      pp.updateDrawable(d.id, d);
+    } catch (_) {
+      if (!identical(current, src)) current.dispose();
+    } finally {
+      _liquifyWarpBusy = false;
+    }
+    // Catch up with pointer movement that arrived while warping.
+    if (!mounted || _liquifyCommitting) return;
+    final pending = _liquifyPendingMove;
+    if (pending != null && _currentDrawable != null && _liquifyBase != null) {
+      _liquifyPendingMove = null;
+      final last = _liquifyLast ?? pending;
+      final delta2 = pending - last;
+      if (delta2.distance >= 0.5) {
+        _liquifyLast = pending;
+        _currentDrawable!.points.add(pending);
+        _currentDrawable!.widths!.add(_currentDrawable!.widths!.last);
+        await _liquifyWarp(pending, delta2, pp);
+      }
+    }
+  }
+
+  /// One displacement stamp: the disc at [center] samples the source image
+  /// progressively further behind the drag direction towards its middle,
+  /// via concentric clip rings (innermost shifts the full [delta]).
+  Future<ui.Image> _liquifyWarpOnce(
+      ui.Image src, Offset center, Offset delta, double radius, int w, int h) async {
+    final recorder = ui.PictureRecorder();
+    final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+    c.drawImage(src, Offset.zero, Paint());
+    const ringCount = 6;
+    for (int i = 0; i < ringCount; i++) {
+      final frac = 1.0 - i / ringCount; // 1.0 core → ~0 edge
+      final outer = radius * (ringCount - i) / ringCount;
+      final inner = radius * (ringCount - 1 - i) / ringCount;
+      final path = ui.Path()
+        ..fillType = ui.PathFillType.evenOdd
+        ..addOval(Rect.fromCircle(center: center, radius: outer))
+        ..addOval(Rect.fromCircle(center: center, radius: inner));
+      c.save();
+      c.clipPath(path);
+      c.drawImage(src, delta * frac, Paint());
+      c.restore();
+    }
+    return recorder.endRecording().toImage(w, h);
+  }
+
+  void _restoreLiquifyStash(ProjectProvider pp) {
+    final curIdx = widget.project.currentLayerIndex
+        .clamp(0, widget.project.layers.length - 1);
+    final layer = widget.project.layers[curIdx];
+    layer.image = _liqStashImage;
+    layer.imageOffset = _liqStashImageOffset;
+    layer.imageRotation = _liqStashImageRotation;
+    layer.imageScale = _liqStashImageScale;
+    layer.imageFlipH = _liqStashImageFlipH;
+    layer.imageFlipV = _liqStashImageFlipV;
+    layer.drawables = _liqStashDrawables;
+    _liqStashImage = null;
+    _liqStashDrawables = [];
+    _markUnsaved(pp);
+  }
+
+  void _markUnsaved(ProjectProvider pp) {
+    pp.markUnsavedChanges();
+  }
+
+  void _cancelLiquify(ProjectProvider pp) {
+    if (_liqStashDrawables.isEmpty && _liqStashImage == null) {
+      // No active liquify drag.
+      return;
+    }
+    _liquifyCommitting = true;
+    _restoreLiquifyStash(pp);
+    _disposeLiquifyImages();
+    _liquifyCommitting = false;
+    pp.refresh();
+  }
+
+  void _disposeLiquifyImages() {
+    final base = _liquifyBase;
+    final result = _liquifyResult;
+    if (base != null) base.dispose();
+    if (result != null && !identical(result, base)) result.dispose();
+    _liquifyBase = null;
+    _liquifyResult = null;
+  }
+
+  Future<void> _finishLiquify(ProjectProvider pp) async {
+    final d = _currentDrawable;
+    _currentDrawable = null;
+    _liquifyCommitting = true;
+    try {
+      // Wait for any in-flight warp render to settle.
+      var guard = 0;
+      while (_liquifyWarpBusy && guard < 250) {
+        await Future.delayed(const Duration(milliseconds: 4));
+        guard++;
+      }
+      final curIdx = widget.project.currentLayerIndex
+          .clamp(0, widget.project.layers.length - 1);
+      final layer = widget.project.layers[curIdx];
+      final warped = _liquifyResult;
+      final moved = d != null && d.points.length > 1;
+      if (d != null) {
+        layer.drawables.removeWhere((x) => x.id == d.id);
+      }
+      if (warped != null && moved && _liquifyWarped) {
+        // Bake the warped raster into the layer; its original content is
+        // discarded (it is baked inside the warp result).
+        _liqStashImage = null;
+        _liqStashDrawables = [];
+        pp.bakeLiquifyResult(layer, warped);
+        final base = _liquifyBase;
+        if (base != null) base.dispose();
+        final result = _liquifyResult;
+        if (result != null && !identical(result, warped)) result.dispose();
+      } else {
+        // Tap without movement (or the warp never ran): restore content.
+        _restoreLiquifyStash(pp);
+        _disposeLiquifyImages();
+      }
+    } finally {
+      _liquifyBase = null;
+      _liquifyResult = null;
+      _liquifyLast = null;
+      _liquifyPendingMove = null;
+      _liquifyCommitting = false;
+      _liquifyWarped = false;
+      pp.refresh();
+    }
   }
 
   Offset _toCanvas(Offset screenPos, Size areaSize) {
@@ -420,6 +660,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
     if (tp.currentTool == ToolType.liquify) {
       if (!_isOnCanvas(canvasPos)) return;
+      if (_liquifyCommitting) return; // previous warp still baking
+      final curIdx = widget.project.currentLayerIndex
+          .clamp(0, widget.project.layers.length - 1);
+      final layer = widget.project.layers[curIdx];
+      if (layer.drawables.isEmpty && layer.image == null) return;
       pp.saveSnapshot();
       _stabilizerQueue.clear();
       // Seed velocity tracking from the pen-down event (not the drag-start
@@ -427,18 +672,47 @@ class _PaintCanvasState extends State<PaintCanvas> {
       // already carries the real speed of the gesture.
       _lastPointerTime = _downTime;
       _lastPointerPos = _downScreenPos;
+      // Stash the layer content and take a raster of it as the warp base.
+      // During the drag the layer renders ONLY the liquify preview (the
+      // warped raster), so pixels visibly move instead of being stamped.
+      _liqStashImage = layer.image;
+      _liqStashImageOffset = layer.imageOffset;
+      _liqStashImageRotation = layer.imageRotation;
+      _liqStashImageScale = layer.imageScale;
+      _liqStashImageFlipH = layer.imageFlipH;
+      _liqStashImageFlipV = layer.imageFlipV;
+      _liqStashDrawables = layer.drawables;
+      layer.image = null;
+      layer.drawables = [];
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
         widths: [tp.brushSize],
-        color: tp.primaryColor.withAlpha(80),
+        color: Colors.transparent,
         strokeWidth: tp.brushSize,
-        opacity: tp.brushOpacity,
+        opacity: 1.0,
         brushType: tp.brushType,
       );
       _currentDrawable = drawable;
-      pp.addDrawable(drawable);
+      layer.drawables.add(drawable);
+      _liquifyRadius = max(6.0, tp.brushSize * 0.5);
+      _liquifyLast = canvasPos;
+      _liquifyPendingMove = null;
+      _liquifyBase = null;
+      _liquifyResult = null;
+      _liquifyWarped = false;
+      _liquifyWarpBusy = false;
       _dragConfirmed = true;
+      _liquifyCommitting = false;
+      pp.refresh();
+      _rasterizeLiquifyBase().then((img) {
+        if (_currentDrawable?.id == drawable.id && !_liquifyCommitting) {
+          _liquifyBase = img;
+          _liquifyResult = img;
+        } else {
+          img.dispose();
+        }
+      });
       return;
     }
 
@@ -474,10 +748,16 @@ class _PaintCanvasState extends State<PaintCanvas> {
       // already carries the real speed of the gesture.
       _lastPointerTime = _downTime;
       _lastPointerPos = _downScreenPos;
+      final as = context.read<AppSettings>();
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
         widths: [tp.brushSize],
+        // Ink starts at the configured floor so the very first dots of a
+        // fast flick are already drier, then get retrofitted like widths.
+        alphas: as.velocityInkEnabled && as.velocityWidthEnabled
+            ? [as.velocityInkMinScale]
+            : null,
         color: tp.currentTool == ToolType.eraser ? Colors.white : tp.primaryColor,
         strokeWidth: tp.brushSize,
         opacity: tp.brushOpacity,
@@ -604,11 +884,17 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (_currentDrawable == null) return;
     }
 
+    if (tp.currentTool == ToolType.liquify) {
+      // Liquify ignores the drag threshold: content must follow the pointer
+      // immediately (its own warps are what make the drag visible).
+      _onLiquifyMove(canvasPos, pp, tp);
+      return;
+    }
+
     if (tp.currentTool == ToolType.brush ||
         tp.currentTool == ToolType.eraser ||
         tp.currentTool == ToolType.smudge ||
-        tp.currentTool == ToolType.willowLeaf ||
-        tp.currentTool == ToolType.liquify) {
+        tp.currentTool == ToolType.willowLeaf) {
       final as = context.read<AppSettings>();
       final now = DateTime.now();
       double widthFromVelocity = tp.brushSize;
@@ -632,6 +918,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
         }
       }
 
+      // Velocity-based ink amount (brush feel): fast strokes lay down less
+      // ink, slow strokes pool it, like a real brush leaving the paper.
+      // Computed after the width EMA below runs? No — computed from the
+      // raw eased width here, then refined once the smoothed width exists.
+      double inkFromVelocity = 1.0;
+
       // Pressure-based width (if supported)
       if (as.pressureWidthEnabled && as.hasPressure && _currentPressure > 0) {
         final pressureRatio = (_currentPressure).clamp(0.0, 1.0);
@@ -652,6 +944,20 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _smoothedWidth = currentWidth;
       _lastPointerTime = now;
       _lastPointerPos = pos;
+
+      // Velocity-based ink amount (brush feel): fast strokes lay down less
+      // ink, slow strokes pool it, like a real brush leaving the paper.
+      // Reuses the smoothed width so width and ink always stay in sync:
+      // normalize the width scale back to 0..1, then map onto the
+      // ink-floor..full-ink range.
+      if (as.velocityInkEnabled &&
+          as.velocityWidthEnabled &&
+          currentWidth < tp.brushSize) {
+        final range = (as.velocityMaxScale - as.velocityMinScale).clamp(0.01, 1.0);
+        final nw = ((currentWidth / tp.brushSize) - as.velocityMinScale) / range;
+        inkFromVelocity = as.velocityInkMinScale +
+            (1.0 - as.velocityInkMinScale) * nw.clamp(0.0, 1.0);
+      }
 
       // The stroke's first point was stamped before any velocity was known;
       // retrofit it with the first computed width so a short, quick flick
@@ -679,6 +985,16 @@ class _PaintCanvasState extends State<PaintCanvas> {
       } else {
         drawPos = canvasPos;
       }
+    final usesInk = (tp.currentTool == ToolType.brush ||
+            tp.currentTool == ToolType.eraser) &&
+        as.velocityInkEnabled;
+    if (usesInk) _currentDrawable!.alphas ??= [];
+    // The stroke's first point was stamped before any velocity was known;
+    // retrofit it with the first computed ink just like the width above.
+    final firstAlphas = _currentDrawable!.alphas;
+    if (firstAlphas != null && firstAlphas.length == 1) {
+      firstAlphas[0] = inkFromVelocity;
+    }
     _currentDrawable!.widths ??= [];
     if (_currentDrawable!.points.isNotEmpty) {
       final lastPt = _currentDrawable!.points.last;
@@ -691,11 +1007,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
           final mid = Offset.lerp(lastPt, drawPos, t)!;
           _currentDrawable!.points.add(mid);
           _currentDrawable!.widths!.add(currentWidth);
+          if (usesInk) _currentDrawable!.alphas!.add(inkFromVelocity);
         }
       }
     }
     _currentDrawable!.points.add(drawPos);
     _currentDrawable!.widths!.add(currentWidth);
+    if (usesInk) _currentDrawable!.alphas!.add(inkFromVelocity);
     pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
     } else if (tp.currentTool == ToolType.shape) {
       if (tp.currentShape == ShapeType.curve) {
@@ -718,6 +1036,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _imagePlaceStartPos = null;
     final pp = context.read<ProjectProvider>();
     final tp = context.read<ToolProvider>();
+
+    // Liquify: bake (or cancel) the warp.
+    if (tp.currentTool == ToolType.liquify) {
+      _finishLiquify(pp);
+      return;
+    }
 
     // Select tool: apply selection
     if (tp.currentTool == ToolType.select && _selectStart != null) {
@@ -888,6 +1212,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
                 // Cancel any pending single-finger drawing state
                 _downScreenPos = null;
                 _dragConfirmed = false;
+                if (tp.currentTool == ToolType.liquify) {
+                  _cancelLiquify(pp);
+                }
                 _handleMultiTouch(details.pointerCount);
                 return;
               }
@@ -1084,7 +1411,10 @@ class _CanvasPainter extends CustomPainter {
       }
     }
 
-    if (currentDrawable != null) {
+    if (currentDrawable != null && !currentDrawable!.isLiquify) {
+      // Liquify drawables are already in the layer's drawable list and
+      // render their warp raster there; drawing them again here would
+      // double-blend their semi-transparent edges.
       currentDrawable!.draw(canvas, Paint());
     }
 

@@ -89,6 +89,16 @@ class _BrushEditorDialogState extends State<BrushEditorDialog> {
                 _slider('brush.velocity_min'.tr(), as.velocityMinScale, 0.1, 1.0, as.setVelocityMinScale, '${(as.velocityMinScale * 100).round()}%'),
                 _slider('brush.velocity_max'.tr(), as.velocityMaxScale, 0.1, 1.0, as.setVelocityMaxScale, '${(as.velocityMaxScale * 100).round()}%'),
                 _slider('brush.velocity_smooth'.tr(), as.velocitySmoothing, 0, 1, as.setVelocitySmoothing, '${(as.velocitySmoothing * 100).round()}%'),
+                // Ink amount follows velocity too (brush feel: fast = drier).
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('brush.velocity_ink'.tr(), style: const TextStyle(fontSize: 13)),
+                  value: as.velocityInkEnabled,
+                  onChanged: (v) => as.setVelocityInkEnabled(v),
+                ),
+                if (as.velocityInkEnabled)
+                  _slider('brush.velocity_ink_min'.tr(), as.velocityInkMinScale, 0.05, 1.0, as.setVelocityInkMinScale, '${(as.velocityInkMinScale * 100).round()}%'),
               ],
               const Divider(height: 16),
               // Pressure section
