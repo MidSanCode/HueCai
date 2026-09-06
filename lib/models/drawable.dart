@@ -46,6 +46,11 @@ class Drawable {
   final ShapeType? shapeType;
   List<Offset> points;
   List<double>? widths;
+
+  /// Per-point ink alpha multiplier (0..1). Recorded along with `points`
+  /// when velocity→ink mapping is enabled (brush feel: fast strokes are
+  /// drier). Null or shorter than `points` means full ink everywhere.
+  List<double>? alphas;
   Color color;
   double strokeWidth;
   double opacity;
@@ -61,6 +66,8 @@ class Drawable {
   Uint8List? smudgePixels;
   int smudgeW = 0;
   int smudgeH = 0;
+  bool isLiquify;
+  ui.Image? liquifyImage;
   BrushType brushType;
 
   Drawable({
@@ -80,6 +87,9 @@ class Drawable {
     this.gradientAngle = 0.0,
     this.leaves,
     this.isSmudge = false,
+    this.isLiquify = false,
+    this.alphas,
+    this.liquifyImage,
     this.brushType = BrushType.hardRound,
   }) : gradientStops = gradientStops ?? [];
 
@@ -131,6 +141,16 @@ class Drawable {
       return;
     } else {
       p.color = color.withValues(alpha: opacity);
+    }
+
+    if (isLiquify) {
+      // Liquified layer content: the warp result is baked into a raster
+      // image that covers the whole canvas.
+      if (liquifyImage != null) {
+        canvas.drawImage(liquifyImage!, Offset.zero,
+            Paint()..color = Colors.white.withValues(alpha: opacity));
+      }
+      return;
     }
 
     if (isSmudge && smudgeSource != null) {
@@ -202,6 +222,7 @@ class Drawable {
     ShapeType? shapeType,
     List<Offset>? points,
     List<double>? widths,
+    List<double>? alphas,
     Color? color,
     double? strokeWidth,
     double? opacity,
@@ -212,6 +233,8 @@ class Drawable {
     List<GradientStop>? gradientStops,
     double? gradientAngle,
     BrushType? brushType,
+    bool? isLiquify,
+    ui.Image? liquifyImage,
   }) =>
       Drawable(
         id: id ?? this.id,
@@ -219,6 +242,7 @@ class Drawable {
         shapeType: shapeType ?? this.shapeType,
         points: points ?? List.from(this.points),
         widths: widths ?? (this.widths != null ? List.from(this.widths!) : null),
+        alphas: alphas ?? (this.alphas != null ? List.from(this.alphas!) : null),
         color: color ?? this.color,
         strokeWidth: strokeWidth ?? this.strokeWidth,
         opacity: opacity ?? this.opacity,
@@ -229,6 +253,8 @@ class Drawable {
         gradientStops: gradientStops ?? List.from(this.gradientStops),
         gradientAngle: gradientAngle ?? this.gradientAngle,
         brushType: brushType ?? this.brushType,
+        isLiquify: isLiquify ?? this.isLiquify,
+        liquifyImage: liquifyImage ?? this.liquifyImage,
       );
 
   Map<String, dynamic> toJson() => {
@@ -237,6 +263,7 @@ class Drawable {
         'shapeType': shapeType?.name,
         'points': points.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
         'widths': widths,
+        'alphas': alphas,
         'color': color.toARGB32(),
         'strokeWidth': strokeWidth,
         'opacity': opacity,
@@ -264,6 +291,9 @@ class Drawable {
         widths: json['widths'] != null
             ? (json['widths'] as List).map((w) => (w as num).toDouble()).toList()
             : null,
+        alphas: json['alphas'] != null
+            ? (json['alphas'] as List).map((a) => (a as num).toDouble()).toList()
+            : null,
         color: Color(json['color'] as int),
         strokeWidth: (json['strokeWidth'] as num).toDouble(),
         opacity: (json['opacity'] as num).toDouble(),
@@ -280,6 +310,7 @@ class Drawable {
         brushType: json['brushType'] != null
             ? BrushType.values.byName(json['brushType'] as String)
             : BrushType.hardRound,
+        isLiquify: json['isLiquify'] as bool? ?? false,
       );
 
   void _drawSmudge(Canvas canvas, Paint paint) {
@@ -365,6 +396,12 @@ class Drawable {
         break;
     }
 
+    final dryness = _grainDryness;
+    if (dryness > 0) {
+      _drawGrainStroke(canvas, paint, dryness);
+      return;
+    }
+
     if (widths != null && widths!.length >= points.length) {
       for (int i = 0; i < points.length - 1; i++) {
         final p = Paint()
@@ -385,31 +422,125 @@ class Drawable {
     }
   }
 
+  /// Paper-grain intensity per brush type. 0 = perfectly smooth (wet
+  /// media), higher = drier and more paper tooth shows through.
+  double get _grainDryness {
+    switch (brushType) {
+      case BrushType.pencil:
+        return 0.9;
+      case BrushType.crayon:
+        return 0.85;
+      case BrushType.charcoal:
+        return 0.8;
+      case BrushType.hardRound:
+        return 0.55;
+      case BrushType.oil:
+        return 0.45;
+      case BrushType.calligraphy:
+        return 0.35;
+      case BrushType.watercolor:
+        return 0.25;
+      default:
+        return 0.0;
+    }
+  }
+
+  double _inkAt(int i) {
+    if (alphas == null || i >= alphas!.length) return 1.0;
+    return alphas![i].clamp(0.0, 1.0);
+  }
+
+  double _widthAt(int i) =>
+      widths != null && i < widths!.length ? widths![i] : strokeWidth;
+
+  /// Dry-media stroke rendering: the stroke is stamped as a chain of
+  /// slightly jittered ink dots along the path. Skipping occasional dots
+  /// (paper pores, sometimes two in a row) and varying their ink amount
+  /// produces subtle light speckles with soft transitions, like real ink
+  /// on textured paper. The RNG is seeded per stroke segment so every
+  /// repaint looks identical.
+  void _drawGrainStroke(Canvas canvas, Paint paint, double dryness) {
+    final base = color;
+    final n = points.length;
+    for (int i = 0; i < n - 1; i++) {
+      final a = points[i];
+      final b = points[i + 1];
+      final wa = _widthAt(i);
+      final wb = _widthAt(i + 1);
+      final ia = _inkAt(i) * opacity;
+      final ib = _inkAt(i + 1) * opacity;
+      final len = (b - a).distance;
+      final avgW = (wa + wb) / 2;
+      final step = max(0.8, avgW * 0.32);
+      final stamps = (len / step).ceil().clamp(1, 64);
+      final rng = Random((id.hashCode ^ (i * 2654435761)) & 0x7fffffff);
+      int skipRun = 0;
+      for (int s = 0; s <= stamps; s++) {
+        final t = s / stamps;
+        final pos = Offset.lerp(a, b, t)!;
+        final w = ui.lerpDouble(wa, wb, t)!;
+        final ink = ui.lerpDouble(ia, ib, t)!;
+        final r = max(0.5, w * 0.5);
+        if (skipRun > 0) {
+          skipRun--;
+          continue;
+        }
+        // Paper pore: skip a stamp (sometimes a short run) so the paper
+        // shows through with a soft transition from the neighbours.
+        if (rng.nextDouble() < dryness * 0.10) {
+          skipRun = rng.nextDouble() < 0.4 ? 1 : 0;
+          continue;
+        }
+        // Ink unevenness: each stamp is slightly lighter or darker.
+        final shade = ink * (1.0 - dryness * 0.5 * rng.nextDouble());
+        if (shade <= 0.004) continue;
+        final ang = rng.nextDouble() * 2 * pi;
+        final jr = rng.nextDouble() * r * 0.14;
+        final dot = Paint()
+          ..color = base.withValues(alpha: shade.clamp(0.0, 1.0))
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(
+          pos + Offset(cos(ang) * jr, sin(ang) * jr),
+          r * (0.86 + 0.18 * rng.nextDouble()),
+          dot,
+        );
+      }
+    }
+  }
+
   void _drawSoftRoundStroke(Canvas canvas, Paint paint) {
     final radius = strokeWidth / 2;
     final rect = Rect.fromCircle(center: Offset.zero, radius: radius);
-    final gradient = RadialGradient(
-      colors: [paint.color, paint.color.withValues(alpha: 0.0)],
-      stops: const [0.6, 1.0],
-    );
-    for (final point in points) {
-      final shader = gradient.createShader(rect.shift(point));
-      canvas.drawCircle(point, radius, Paint()..shader = shader);
+    for (int i = 0; i < points.length; i++) {
+      final c = paint.color.withValues(alpha: paint.color.a * _inkAt(i));
+      final gradient = RadialGradient(
+        colors: [c, c.withValues(alpha: 0.0)],
+        stops: const [0.6, 1.0],
+      );
+      final shader = gradient.createShader(rect.shift(points[i]));
+      canvas.drawCircle(points[i], radius, Paint()..shader = shader);
     }
   }
 
   void _drawAirbrushStroke(Canvas canvas, Paint paint) {
     final radius = strokeWidth / 2;
-    final rng = Random();
-    for (final point in points) {
-      for (int i = 0; i < 24; i++) {
+    for (int i = 0; i < points.length; i++) {
+      // Seeded per point so repaints are stable (no flickering dots).
+      final rng = Random((id.hashCode ^ (i * 2654435761)) & 0x7fffffff);
+      final dot = Paint()
+        ..color = paint.color.withValues(
+            alpha: (paint.color.a * 0.25 * _inkAt(i)).clamp(0.0, 1.0));
+      for (int j = 0; j < 24; j++) {
         final angle = rng.nextDouble() * 2 * pi;
         final dist = sqrt(rng.nextDouble()) * radius;
-        final dot = Offset(
-          point.dx + cos(angle) * dist,
-          point.dy + sin(angle) * dist,
+        canvas.drawCircle(
+          Offset(
+            points[i].dx + cos(angle) * dist,
+            points[i].dy + sin(angle) * dist,
+          ),
+          1.2,
+          dot,
         );
-        canvas.drawCircle(dot, 1.2, Paint()..color = paint.color.withValues(alpha: 0.25));
       }
     }
   }
@@ -422,9 +553,25 @@ class Drawable {
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
     if (widths != null && widths!.length >= points.length) {
+      final hasInk = alphas != null && alphas!.length >= points.length;
       for (int i = 0; i < points.length - 1; i++) {
         eraserPaint.strokeWidth = widths![i];
-        canvas.drawLine(points[i], points[i + 1], eraserPaint);
+        if (hasInk) {
+          // Varying erase strength: butt-capped segments meeting at the
+          // midpoints avoid the double-erase dark seams that round caps
+          // would create where segments overlap.
+          final a =
+              i == 0 ? points[0] : Offset.lerp(points[i - 1], points[i], 0.5)!;
+          final b = i == points.length - 2
+              ? points.last
+              : Offset.lerp(points[i], points[i + 1], 0.5)!;
+          eraserPaint.color =
+              Colors.white.withValues(alpha: (alphas![i] * opacity).clamp(0.0, 1.0));
+          eraserPaint.strokeCap = StrokeCap.butt;
+          canvas.drawLine(a, b, eraserPaint);
+        } else {
+          canvas.drawLine(points[i], points[i + 1], eraserPaint);
+        }
       }
     } else {
       final path = ui.Path()..moveTo(points.first.dx, points.first.dy);
@@ -444,9 +591,24 @@ class Drawable {
       ..style = PaintingStyle.stroke
       ..blendMode = BlendMode.srcOver;
     if (widths != null && widths!.length >= points.length) {
+      final hasInk = alphas != null && alphas!.length >= points.length;
       for (int i = 0; i < points.length - 1; i++) {
         markerPaint.strokeWidth = widths![i];
-        canvas.drawLine(points[i], points[i + 1], markerPaint);
+        if (hasInk) {
+          // Butt-capped midpoint segments so per-segment alpha does not
+          // stack darker at the joints.
+          final a =
+              i == 0 ? points[0] : Offset.lerp(points[i - 1], points[i], 0.5)!;
+          final b = i == points.length - 2
+              ? points.last
+              : Offset.lerp(points[i], points[i + 1], 0.5)!;
+          markerPaint.color = color.withValues(
+              alpha: (alphas![i] * opacity * 0.6).clamp(0.0, 1.0));
+          markerPaint.strokeCap = StrokeCap.butt;
+          canvas.drawLine(a, b, markerPaint);
+        } else {
+          canvas.drawLine(points[i], points[i + 1], markerPaint);
+        }
       }
     } else {
       final path = ui.Path()..moveTo(points.first.dx, points.first.dy);

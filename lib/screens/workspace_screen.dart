@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
@@ -789,12 +790,27 @@ class _ReplayDialog extends StatefulWidget {
 }
 
 class _ReplayDialogState extends State<_ReplayDialog> {
-  int _visibleCount = 0;
+  /// Fractional stroke counter. Kept as a double so slow speeds (0.5x)
+  /// actually advance — the old int field floor-dropped the 0.5 increment
+  /// every tick and the 0.5x chip appeared dead.
+  double _progress = 0;
   bool _paused = false;
+  bool _finished = false;
   double _speed = 1.0;
   Timer? _timer;
 
+  /// Incremental render cache: strokes [0, _baseCount) baked into one
+  /// image. Repainting used to redraw every visible stroke from scratch
+  /// each tick (O(n²) over a replay), which made playback crawl at ~1/5
+  /// of the nominal speed on larger drawings. With the cache each frame
+  /// only blits the baked image and draws the few newest strokes.
+  ui.Image? _baseImage;
+  int _baseCount = 0;
+  bool _baking = false;
+
   static const List<double> _speeds = [0.5, 1.0, 2.0, 4.0];
+
+  int get _visibleCount => _progress.floor().clamp(0, widget.drawables.length);
 
   @override
   void initState() {
@@ -803,43 +819,125 @@ class _ReplayDialogState extends State<_ReplayDialog> {
   }
 
   void _startTimer() {
+    _stopTimer();
+    _timer = Timer.periodic(const Duration(milliseconds: 30), (_) => _tick());
+  }
+
+  void _stopTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
-      if (_paused) return;
-      final increment = _speed;
-      setState(() {
-        _visibleCount = (_visibleCount + increment).floor();
-        if (_visibleCount >= widget.drawables.length) {
-          _visibleCount = widget.drawables.length;
-          timer.cancel();
-        }
-      });
-    });
+    _timer = null;
+  }
+
+  void _tick() {
+    if (!mounted || _paused || _finished) {
+      _stopTimer();
+      return;
+    }
+    _progress = (_progress + _speed).clamp(0.0, widget.drawables.length.toDouble());
+    if (_progress >= widget.drawables.length) {
+      _finished = true;
+      _stopTimer();
+    }
+    _bakeIfNeeded();
+    setState(() {});
+  }
+
+  void _bakeIfNeeded() {
+    final target = _visibleCount;
+    if (target > _baseCount && !_baking) {
+      _bake(target);
+    }
+  }
+
+  Future<void> _bake(int upTo) async {
+    _baking = true;
+    try {
+      final w = widget.project.settings.width.toInt();
+      final h = widget.project.settings.height.toInt();
+      if (w <= 0 || h <= 0) return;
+      final recorder = ui.PictureRecorder();
+      final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+      if (_baseImage != null) {
+        c.drawImage(_baseImage!, Offset.zero, Paint());
+      }
+      for (int i = _baseCount; i < upTo && i < widget.drawables.length; i++) {
+        widget.drawables[i].draw(c, Paint());
+      }
+      final img = await recorder.endRecording().toImage(w, h);
+      if (!mounted) {
+        img.dispose();
+        return;
+      }
+      final old = _baseImage;
+      _baseImage = img;
+      _baseCount = upTo;
+      old?.dispose();
+      setState(() {});
+    } catch (_) {
+      // Cache failure is non-fatal: the painter falls back to live drawing.
+    } finally {
+      _baking = false;
+    }
+  }
+
+  void _resetBaseCache() {
+    _baseImage?.dispose();
+    _baseImage = null;
+    _baseCount = 0;
+  }
+
+  void _restartFromStart() {
+    _resetBaseCache();
+    _progress = 0;
+    _finished = false;
+    _paused = false;
+    _startTimer();
+    setState(() {});
   }
 
   void _togglePause() {
     setState(() {
-      _paused = !_paused;
-      if (_paused) {
-        _timer?.cancel();
+      if (_finished) {
+        // Play after the end: replay again from the beginning.
+        _restartFromStart();
       } else {
-        _startTimer();
+        _paused = !_paused;
+        if (_paused) {
+          _stopTimer();
+        } else {
+          _startTimer();
+        }
       }
     });
   }
 
   void _seekTo(double value) {
     setState(() {
-      _visibleCount = value.round();
-      if (_visibleCount < widget.drawables.length && _timer == null) {
-        _startTimer();
+      _progress = value.clamp(0.0, widget.drawables.length.toDouble());
+      final target = _visibleCount;
+      if (target < _baseCount) {
+        // Seeking backwards invalidates the baked prefix.
+        _resetBaseCache();
+      }
+      if (target < widget.drawables.length) {
+        _finished = false;
+        // The old code checked `_timer == null`, but a finished timer was
+        // cancelled, not nulled — seeking after completion could never
+        // restart playback. _stopTimer now nulls it.
+        if (_timer == null && !_paused) _startTimer();
+      } else {
+        _finished = true;
+        _stopTimer();
       }
     });
+    _bakeIfNeeded();
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _stopTimer();
+    _baseImage?.dispose();
+    _baseImage = null;
     super.dispose();
   }
 
@@ -871,6 +969,8 @@ class _ReplayDialogState extends State<_ReplayDialog> {
                     painter: _ReplayPainter(
                       drawables: widget.drawables,
                       visibleCount: _visibleCount,
+                      baseImage: _baseImage,
+                      baseCount: _baseCount,
                       canvasW: widget.project.settings.width.toDouble(),
                       canvasH: widget.project.settings.height.toDouble(),
                     ),
@@ -880,7 +980,7 @@ class _ReplayDialogState extends State<_ReplayDialog> {
             const SizedBox(height: 8),
             // Progress bar
             Slider(
-              value: _visibleCount.clamp(0, total).toDouble(),
+              value: _progress.clamp(0, total).toDouble(),
               min: 0,
               max: total > 0 ? total.toDouble() : 1,
               onChanged: _seekTo,
@@ -897,7 +997,11 @@ class _ReplayDialogState extends State<_ReplayDialog> {
                     selected: _speed == s,
                     onSelected: (v) {
                       setState(() => _speed = s);
-                      if (_timer == null && !_paused) _startTimer();
+                      if (_finished) {
+                        _restartFromStart();
+                      } else if (_timer == null && !_paused) {
+                        _startTimer();
+                      }
                     },
                     visualDensity: VisualDensity.compact,
                     labelPadding: const EdgeInsets.symmetric(horizontal: 6),
@@ -906,7 +1010,10 @@ class _ReplayDialogState extends State<_ReplayDialog> {
                 const SizedBox(width: 12),
                 // Pause/Play
                 IconButton(
-                  icon: Icon(_paused ? Icons.play_arrow : Icons.pause, size: 24),
+                  icon: Icon(
+                    _paused || _finished ? Icons.play_arrow : Icons.pause,
+                    size: 24,
+                  ),
                   onPressed: _togglePause,
                 ),
                 const SizedBox(width: 8),
@@ -929,12 +1036,16 @@ class _ReplayDialogState extends State<_ReplayDialog> {
 class _ReplayPainter extends CustomPainter {
   final List<Drawable> drawables;
   final int visibleCount;
+  final ui.Image? baseImage;
+  final int baseCount;
   final double canvasW;
   final double canvasH;
 
   _ReplayPainter({
     required this.drawables,
     required this.visibleCount,
+    this.baseImage,
+    this.baseCount = 0,
     required this.canvasW,
     required this.canvasH,
   });
@@ -949,12 +1060,26 @@ class _ReplayPainter extends CustomPainter {
       Rect.fromLTWH(0, 0, canvasW, canvasH),
       Paint()..color = Colors.white,
     );
-    for (int i = 0; i < drawables.length && i < visibleCount; i++) {
-      drawables[i].draw(canvas, Paint());
+    // Blit the baked prefix image, then draw only the strokes added since
+    // the last bake. Falls back to drawing everything live when the cache
+    // is unavailable.
+    final useBase = baseImage != null && baseCount > 0 && baseCount <= visibleCount;
+    if (useBase) {
+      canvas.drawImage(baseImage!, Offset.zero, Paint());
+      for (int i = baseCount; i < drawables.length && i < visibleCount; i++) {
+        drawables[i].draw(canvas, Paint());
+      }
+    } else {
+      for (int i = 0; i < drawables.length && i < visibleCount; i++) {
+        drawables[i].draw(canvas, Paint());
+      }
     }
     canvas.restore();
   }
 
   @override
-  bool shouldRepaint(_ReplayPainter old) => old.visibleCount != visibleCount;
+  bool shouldRepaint(_ReplayPainter old) =>
+      old.visibleCount != visibleCount ||
+      old.baseImage != baseImage ||
+      old.baseCount != baseCount;
 }
