@@ -1,5 +1,4 @@
 import 'dart:math';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'brush.dart';
@@ -63,11 +62,18 @@ class Drawable {
   List<LeafData>? leaves;
   bool isSmudge;
   ui.Image? smudgeSource;
-  Uint8List? smudgePixels;
   int smudgeW = 0;
   int smudgeH = 0;
   bool isLiquify;
   ui.Image? liquifyImage;
+
+  /// Text tool content. Rendered at points.first with [fontSize].
+  String? textData;
+  double fontSize;
+
+  /// Paint-bucket fill region as flat runs of [y, x0, x1] triplets (row
+  /// spans of the flood-filled area). Serializable, rendered as rects.
+  List<int>? fillSpans;
   BrushType brushType;
 
   Drawable({
@@ -90,6 +96,9 @@ class Drawable {
     this.isLiquify = false,
     this.alphas,
     this.liquifyImage,
+    this.textData,
+    this.fontSize = 24.0,
+    this.fillSpans,
     this.brushType = BrushType.hardRound,
   }) : gradientStops = gradientStops ?? [];
 
@@ -103,7 +112,32 @@ class Drawable {
       if (p.dx > maxX) maxX = p.dx;
       if (p.dy > maxY) maxY = p.dy;
     }
+    if (textData != null && textData!.trim().isNotEmpty) {
+      final size = _measureText();
+      maxX = max(maxX, points.first.dx + size.width);
+      maxY = max(maxY, points.first.dy + size.height);
+    }
+    if (fillSpans != null) {
+      final spans = fillSpans!;
+      for (int i = 0; i + 2 < spans.length; i += 3) {
+        if (spans[i + 1] < minX) minX = spans[i + 1].toDouble();
+        if (spans[i] < minY) minY = spans[i].toDouble();
+        if (spans[i + 2] + 1 > maxX) maxX = spans[i + 2] + 1.0;
+        if (spans[i] + 1 > maxY) maxY = spans[i] + 1.0;
+      }
+    }
     return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  Size _measureText() {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: textData,
+        style: TextStyle(fontSize: fontSize, height: 1.2),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return Size(tp.width, tp.height);
   }
 
   void draw(Canvas canvas, Paint paint) {
@@ -115,32 +149,43 @@ class Drawable {
 
     if (isGradient && gradientStops.length >= 2 && points.length >= 2) {
       // Gradient fill tool: a linear gradient running along the dragged
-      // line. Both ends are extended far beyond the canvas so the ramp
-      // reaches every edge without a hard cutoff at the drag endpoints.
+      // line. PS-like: the ramp starts and ends exactly at the drag
+      // endpoints — before p0 the start colour holds, beyond p1 the end
+      // colour holds — so the drag length decides how steep the
+      // transition is.
       final p0 = points.first;
       final p1 = points.last;
       final d = p1 - p0;
       final len = d.distance;
       if (len < 0.5) {
         p.color = gradientStops.first.color.withValues(alpha: opacity);
-      } else {
-        final dir = Offset(d.dx / len, d.dy / len);
-        const double ext = 10000.0;
-        p.shader = ui.Gradient.linear(
-          p0 - dir * ext,
-          p1 + dir * ext,
-          gradientStops
-              .map((s) => s.color.withValues(alpha: s.color.a * opacity))
-              .toList(),
-        );
+        canvas.drawRect(Rect.fromPoints(p0, p1).inflate(10000), p);
+        return;
       }
-      canvas.drawRect(
-        Rect.fromPoints(p0, p1).inflate(10000),
-        p,
+      p.shader = ui.Gradient.linear(
+        p0,
+        p1,
+        gradientStops
+            .map((s) => s.color.withValues(alpha: s.color.a * opacity))
+            .toList(),
       );
+      // Fill a huge rect with the shader; the ramp is clamped outside
+      // [p0, p1] so the whole document gets covered (the canvas painter
+      // clips to the document rect).
+      canvas.drawRect(Rect.fromPoints(p0, p1).inflate(10000), p);
       return;
     } else {
       p.color = color.withValues(alpha: opacity);
+    }
+
+    if (textData != null && textData!.trim().isNotEmpty) {
+      _drawText(canvas);
+      return;
+    }
+
+    if (fillSpans != null) {
+      _drawFillSpans(canvas);
+      return;
     }
 
     if (isLiquify) {
@@ -154,7 +199,11 @@ class Drawable {
     }
 
     if (isSmudge && smudgeSource != null) {
-      _drawSmudge(canvas, p);
+      // Wet smudge: the canvas widget warps an evolving raster of the
+      // layer as the pointer moves; this drawable renders the latest
+      // smear state (content + smudges) for this layer.
+      canvas.drawImage(smudgeSource!, Offset.zero,
+          Paint()..color = Colors.white.withValues(alpha: opacity));
       return;
     }
 
@@ -235,6 +284,9 @@ class Drawable {
     BrushType? brushType,
     bool? isLiquify,
     ui.Image? liquifyImage,
+    String? textData,
+    double? fontSize,
+    List<int>? fillSpans,
   }) =>
       Drawable(
         id: id ?? this.id,
@@ -255,6 +307,9 @@ class Drawable {
         brushType: brushType ?? this.brushType,
         isLiquify: isLiquify ?? this.isLiquify,
         liquifyImage: liquifyImage ?? this.liquifyImage,
+        textData: textData ?? this.textData,
+        fontSize: fontSize ?? this.fontSize,
+        fillSpans: fillSpans ?? (this.fillSpans != null ? List.from(this.fillSpans!) : null),
       );
 
   Map<String, dynamic> toJson() => {
@@ -274,6 +329,9 @@ class Drawable {
         'gradientStops': gradientStops.map((s) => s.toJson()).toList(),
         'gradientAngle': gradientAngle,
         'brushType': brushType.name,
+        if (textData != null) 'text': textData,
+        if (textData != null) 'fontSize': fontSize,
+        if (fillSpans != null) 'fillSpans': fillSpans,
       };
 
   factory Drawable.fromJson(Map<String, dynamic> json) => Drawable(
@@ -311,41 +369,38 @@ class Drawable {
             ? BrushType.values.byName(json['brushType'] as String)
             : BrushType.hardRound,
         isLiquify: json['isLiquify'] as bool? ?? false,
+        textData: json['text'] as String?,
+        fontSize: (json['fontSize'] as num?)?.toDouble() ?? 24.0,
+        fillSpans: json['fillSpans'] != null
+            ? (json['fillSpans'] as List).map((e) => (e as num).toInt()).toList()
+            : null,
       );
 
-  void _drawSmudge(Canvas canvas, Paint paint) {
-    if (smudgePixels == null || smudgeW == 0 || smudgeH == 0) return;
-    final src = smudgePixels!;
-    // For every sampled position, randomly pick source colors inside the
-    // brush radius and stamp them at random nearby spots — visually
-    // swapping colors within the smudged area. The RNG is seeded per
-    // point index so repaints are stable.
-    for (int i = 0; i < points.length; i++) {
-      final w = widths != null && i < widths!.length ? widths![i] : strokeWidth;
-      final radius = max(2.0, w * 0.6);
-      final count = ((radius * radius) / 4).round().clamp(3, 60);
-      final rng = Random((id.hashCode ^ (i * 2654435761)) & 0x7fffffff);
-      final pt = points[i];
-      for (int n = 0; n < count; n++) {
-        // Random source position within (slightly beyond) the radius.
-        final a1 = rng.nextDouble() * 2 * pi;
-        final r1 = sqrt(rng.nextDouble()) * radius * 1.2;
-        final sx = (pt.dx + cos(a1) * r1).floor().clamp(0, smudgeW - 1);
-        final sy = (pt.dy + sin(a1) * r1).floor().clamp(0, smudgeH - 1);
-        final idx = (sy * smudgeW + sx) * 4;
-        final alpha = src[idx + 3];
-        if (alpha < 8) continue;
-        final c = Color.fromARGB(alpha, src[idx], src[idx + 1], src[idx + 2]);
-        // Random destination position inside the radius.
-        final a2 = rng.nextDouble() * 2 * pi;
-        final r2 = sqrt(rng.nextDouble()) * radius * 0.9;
-        final dotR = max(1.0, w * 0.12);
-        canvas.drawCircle(
-          Offset(pt.dx + cos(a2) * r2, pt.dy + sin(a2) * r2),
-          dotR,
-          Paint()..color = c,
-        );
-      }
+  void _drawText(Canvas canvas) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: textData,
+        style: TextStyle(
+          color: color.withValues(alpha: opacity),
+          fontSize: fontSize,
+          height: 1.2,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, points.first);
+  }
+
+  void _drawFillSpans(Canvas canvas) {
+    final spans = fillSpans!;
+    final p = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color.withValues(alpha: opacity);
+    for (int i = 0; i + 2 < spans.length; i += 3) {
+      final y = spans[i].toDouble();
+      final x0 = spans[i + 1].toDouble();
+      final x1 = spans[i + 2].toDouble();
+      canvas.drawRect(Rect.fromLTRB(x0, y, x1 + 1.0, y + 1.0), p);
     }
   }
 

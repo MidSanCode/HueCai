@@ -264,5 +264,9 @@
   "workspace.selected": "已选择 {count} 项",
   "workspace.search_hint": "搜索项目…",
   "workspace.no_results": "没有匹配的项目",
-  "workspace.folder_hint": "文件夹名称"
+  "workspace.folder_hint": "文件夹名称",
+  "text.title": "添加文字",
+  "text.hint": "输入文字…",
+  "text.size": "字号",
+  "text.ok": "确定"
 }

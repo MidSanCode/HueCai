@@ -264,5 +264,9 @@
   "workspace.selected": "{count} selected",
   "workspace.search_hint": "Search projects…",
   "workspace.no_results": "No matching projects",
-  "workspace.folder_hint": "Folder name"
+  "workspace.folder_hint": "Folder name",
+  "text.title": "Add Text",
+  "text.hint": "Type something…",
+  "text.size": "Size",
+  "text.ok": "OK"
 }

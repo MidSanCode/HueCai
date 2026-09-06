@@ -12,6 +12,7 @@ import '../../providers/canvas_provider.dart';
 import '../../providers/project_provider.dart';
 import '../../providers/app_settings.dart';
 import '../../utils/logger.dart';
+import '../dialogs/text_input_dialog.dart';
 
 class PaintCanvas extends StatefulWidget {
   final Project project;
@@ -63,9 +64,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
   int? _warpDragIndex;
   Offset? _editMoveStart;
 
-  // Liquify state: the base image is a raster of the active layer taken at
-  // pen-down; each drag segment re-warps the previous result so content
-  // actually smears with the pointer.
+  // Liquify state: the layer content is NEVER cleared — a liquify overlay
+  // drawable renders the warped raster on top of the intact content, so the
+  // canvas can never go blank (undo / save / reload all keep the original).
+  // The base image is a raster of the active layer taken at pen-down; each
+  // drag segment re-warps the previous result so content actually smears
+  // with the pointer.
   ui.Image? _liquifyBase;
   ui.Image? _liquifyResult;
   Offset? _liquifyLast;
@@ -73,14 +77,18 @@ class _PaintCanvasState extends State<PaintCanvas> {
   bool _liquifyWarped = false;
   Offset? _liquifyPendingMove;
   bool _liquifyCommitting = false;
-  ui.Image? _liqStashImage;
-  Offset _liqStashImageOffset = Offset.zero;
-  double _liqStashImageRotation = 0;
-  double _liqStashImageScale = 1.0;
-  bool _liqStashImageFlipH = false;
-  bool _liqStashImageFlipV = false;
-  List<Drawable> _liqStashDrawables = [];
   bool _liquifyWarpBusy = false;
+
+  // Smudge state: an evolving raster of the active layer. Every move step
+  // warps the previous raster (pulling content from behind the pointer),
+  // so paint picked up in one area is carried into the next — colours from
+  // different places genuinely smear into each other, like wet paint.
+  ui.Image? _smudgeState;
+  bool _smudgeBusy = false;
+  bool _smudgeCommitting = false;
+  Offset? _smudgeLast;
+  Offset? _smudgePendingMove;
+  double _smudgeRadius = 12;
 
   Future<void> _onMagicWandTap(Offset canvasPos, ProjectProvider pp) async {
     final snap = pp.canvasSnapshot;
@@ -191,32 +199,171 @@ class _PaintCanvasState extends State<PaintCanvas> {
   void _captureSmudgeSource() {
     final pp = context.read<ProjectProvider>();
     if (_currentDrawable == null || !_currentDrawable!.isSmudge) return;
+    final curIdx = widget.project.currentLayerIndex
+        .clamp(0, widget.project.layers.length - 1);
+    final layer = widget.project.layers[curIdx];
     final pw = widget.project.settings.width.toInt();
     final ph = widget.project.settings.height.toInt();
     if (pw <= 0 || ph <= 0) return;
     final recorder = ui.PictureRecorder();
     final offscreenCanvas = Canvas(recorder, Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()));
-    for (final layer in widget.project.layers) {
-      if (!layer.visible) continue;
-      for (final d in layer.drawables) {
-        if (d.id == _currentDrawable!.id) continue;
-        d.draw(offscreenCanvas, Paint());
-      }
+    for (final d in layer.drawables) {
+      if (d.id == _currentDrawable!.id) continue;
+      d.draw(offscreenCanvas, Paint());
+    }
+    final img = layer.image;
+    if (img != null) {
+      offscreenCanvas.save();
+      offscreenCanvas.translate(
+          layer.imageOffset.dx + img.width / 2, layer.imageOffset.dy + img.height / 2);
+      offscreenCanvas.rotate(layer.imageRotation);
+      final flipX = layer.imageFlipH ? -1.0 : 1.0;
+      final flipY = layer.imageFlipV ? -1.0 : 1.0;
+      offscreenCanvas.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+      offscreenCanvas.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
+        Paint(),
+      );
+      offscreenCanvas.restore();
     }
     final picture = recorder.endRecording();
-    picture.toImage(pw, ph).then((img) async {
-      if (_currentDrawable != null && _currentDrawable!.isSmudge) {
-        final data = await img.toByteData();
-        if (data != null) {
-          _currentDrawable!
-            ..smudgeSource = img
-            ..smudgePixels = data.buffer.asUint8List()
-            ..smudgeW = pw
-            ..smudgeH = ph;
-          pp.updateDrawable(_currentDrawable!.id, _currentDrawable!);
-        }
+    final strokeId = _currentDrawable!.id;
+    picture.toImage(pw, ph).then((captured) {
+      final d = _currentDrawable;
+      if (d != null && d.id == strokeId && d.isSmudge && !_smudgeBusy) {
+        d.smudgeSource = captured;
+        d.smudgeW = pw;
+        d.smudgeH = ph;
+        _smudgeState = captured;
+        pp.updateDrawable(d.id, d);
+      } else {
+        captured.dispose();
       }
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Smudge: wet-paint smear.
+  //
+  // Each pointer move warps the evolving raster: rings behind the pointer
+  // are pulled forward, so the brush carries paint along the stroke. The
+  // smear accumulates because every step re-warps the previous result.
+  // ---------------------------------------------------------------------------
+
+  void _onSmudgeMove(Offset canvasPos, ProjectProvider pp) {
+    final d = _currentDrawable;
+    if (d == null || _smudgeCommitting) return;
+    if (_smudgeBusy || _smudgeState == null) {
+      // Raster not ready yet or a warp is in flight; catch up later.
+      _smudgePendingMove = canvasPos;
+      return;
+    }
+    final last = _smudgeLast ?? canvasPos;
+    final delta = canvasPos - last;
+    if (delta.distance < 0.5) return;
+    _smudgeLast = canvasPos;
+    d.points.add(canvasPos);
+    if (d.widths != null) d.widths!.add(d.widths!.last);
+    _smudgeWarp(canvasPos, delta, pp);
+  }
+
+  Future<void> _smudgeWarp(Offset center, Offset delta, ProjectProvider pp) async {
+    final src = _smudgeState;
+    if (src == null) return;
+    final w = widget.project.settings.width.toInt();
+    final h = widget.project.settings.height.toInt();
+    final radius = _smudgeRadius;
+    // A finger can only carry the paint it touches: clamp the pull to
+    // ~1.2 brush radii per event so fast flicks don't tear the image.
+    final pullDist = delta.distance;
+    final pull = pullDist > radius * 1.2
+        ? delta * (radius * 1.2 / pullDist)
+        : delta;
+    final steps = (pull.distance / (radius * 0.45)).ceil().clamp(1, 3);
+    _smudgeBusy = true;
+    ui.Image current = src;
+    try {
+      for (int s = 1; s <= steps; s++) {
+        final t = s / steps;
+        final target = Offset.lerp(center - pull, center, t)!;
+        final stepDelta = pull / steps.toDouble();
+        current = await _liquifyWarpOnce(current, target, stepDelta, radius, w, h);
+      }
+      final d = _currentDrawable;
+      if (!mounted || d == null) {
+        if (!identical(current, src)) current.dispose();
+        return;
+      }
+      _smudgeState = current;
+      d.smudgeSource = current;
+      d.smudgeW = w;
+      d.smudgeH = h;
+      pp.updateDrawable(d.id, d);
+      if (!identical(src, current)) src.dispose();
+    } catch (_) {
+      if (!identical(current, src)) current.dispose();
+    } finally {
+      _smudgeBusy = false;
+    }
+    if (!mounted) return;
+    final pending = _smudgePendingMove;
+    if (pending != null && _currentDrawable != null && _smudgeState != null) {
+      _smudgePendingMove = null;
+      final last = _smudgeLast ?? pending;
+      final delta2 = pending - last;
+      if (delta2.distance >= 0.5) {
+        _smudgeLast = pending;
+        _currentDrawable!.points.add(pending);
+        await _smudgeWarp(pending, delta2, pp);
+      }
+    }
+  }
+
+  Future<void> _finishSmudge(ProjectProvider pp) async {
+    final d = _currentDrawable;
+    _currentDrawable = null;
+    // Snapshot the committed state BEFORE waiting: a new stroke may begin
+    // (and reset _smudgeState) while we settle the in-flight warp.
+    final committed = d != null && d.points.length > 1 && _smudgeState != null;
+    _smudgeCommitting = true;
+    // Wait for an in-flight warp to settle.
+    var guard = 0;
+    while (_smudgeBusy && guard < 250) {
+      await Future.delayed(const Duration(milliseconds: 4));
+      guard++;
+    }
+    if (d != null && !committed) {
+      // Tap without movement: drop the overlay (identical to the layer).
+      final curIdx = widget.project.currentLayerIndex
+          .clamp(0, widget.project.layers.length - 1);
+      final layer = widget.project.layers[curIdx];
+      layer.drawables.removeWhere((x) => x.id == d.id);
+      d.smudgeSource?.dispose();
+    }
+    _smudgeState = null;
+    _smudgeLast = null;
+    _smudgePendingMove = null;
+    _smudgeBusy = false;
+    _smudgeCommitting = false;
+    pp.refresh();
+  }
+
+  void _cancelSmudge(ProjectProvider pp) {
+    final d = _currentDrawable;
+    if (d == null) return;
+    _currentDrawable = null;
+    final curIdx = widget.project.currentLayerIndex
+        .clamp(0, widget.project.layers.length - 1);
+    final layer = widget.project.layers[curIdx];
+    layer.drawables.removeWhere((x) => x.id == d.id);
+    d.smudgeSource?.dispose();
+    _smudgeState = null;
+    _smudgeLast = null;
+    _smudgePendingMove = null;
+    _smudgeBusy = false;
+    pp.refresh();
   }
 
   bool _isOnCanvas(Offset canvasPos) {
@@ -255,25 +402,28 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _liquifyWarp(canvasPos, delta, pp);
   }
 
-  /// Rasterizes the stashed (original) layer content as the warp base.
+  /// Rasterizes the current layer content (drawables + image) as the warp
+  /// base. The layer is left intact — the warp result becomes an overlay.
   Future<ui.Image> _rasterizeLiquifyBase() async {
     final w = widget.project.settings.width.toInt();
     final h = widget.project.settings.height.toInt();
+    final curIdx = widget.project.currentLayerIndex
+        .clamp(0, widget.project.layers.length - 1);
+    final layer = widget.project.layers[curIdx];
     final recorder = ui.PictureRecorder();
     final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
-    for (final d in _liqStashDrawables) {
+    for (final d in layer.drawables) {
       d.draw(c, Paint());
     }
-    final img = _liqStashImage;
+    final img = layer.image;
     if (img != null) {
       c.save();
-      c.translate(
-          _liqStashImageOffset.dx + img.width / 2,
-          _liqStashImageOffset.dy + img.height / 2);
-      c.rotate(_liqStashImageRotation);
-      final flipX = _liqStashImageFlipH ? -1.0 : 1.0;
-      final flipY = _liqStashImageFlipV ? -1.0 : 1.0;
-      c.scale(_liqStashImageScale * flipX, _liqStashImageScale * flipY);
+      c.translate(layer.imageOffset.dx + img.width / 2,
+          layer.imageOffset.dy + img.height / 2);
+      c.rotate(layer.imageRotation);
+      final flipX = layer.imageFlipH ? -1.0 : 1.0;
+      final flipY = layer.imageFlipV ? -1.0 : 1.0;
+      c.scale(layer.imageScale * flipX, layer.imageScale * flipY);
       c.drawImageRect(
         img,
         Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
@@ -361,33 +511,28 @@ class _PaintCanvasState extends State<PaintCanvas> {
     return recorder.endRecording().toImage(w, h);
   }
 
-  void _restoreLiquifyStash(ProjectProvider pp) {
-    final curIdx = widget.project.currentLayerIndex
-        .clamp(0, widget.project.layers.length - 1);
-    final layer = widget.project.layers[curIdx];
-    layer.image = _liqStashImage;
-    layer.imageOffset = _liqStashImageOffset;
-    layer.imageRotation = _liqStashImageRotation;
-    layer.imageScale = _liqStashImageScale;
-    layer.imageFlipH = _liqStashImageFlipH;
-    layer.imageFlipV = _liqStashImageFlipV;
-    layer.drawables = _liqStashDrawables;
-    _liqStashImage = null;
-    _liqStashDrawables = [];
-    _markUnsaved(pp);
-  }
-
   void _markUnsaved(ProjectProvider pp) {
     pp.markUnsavedChanges();
   }
 
+  /// Removes the in-progress liquify overlay from the active layer.
+  void _removeLiquifyOverlay(String drawableId, ProjectProvider pp) {
+    final curIdx = widget.project.currentLayerIndex
+        .clamp(0, widget.project.layers.length - 1);
+    final layer = widget.project.layers[curIdx];
+    layer.drawables.removeWhere((x) => x.id == drawableId);
+    _markUnsaved(pp);
+  }
+
   void _cancelLiquify(ProjectProvider pp) {
-    if (_liqStashDrawables.isEmpty && _liqStashImage == null) {
+    final d = _currentDrawable;
+    if (d == null) {
       // No active liquify drag.
       return;
     }
     _liquifyCommitting = true;
-    _restoreLiquifyStash(pp);
+    _currentDrawable = null;
+    _removeLiquifyOverlay(d.id, pp);
     _disposeLiquifyImages();
     _liquifyCommitting = false;
     pp.refresh();
@@ -413,28 +558,20 @@ class _PaintCanvasState extends State<PaintCanvas> {
         await Future.delayed(const Duration(milliseconds: 4));
         guard++;
       }
-      final curIdx = widget.project.currentLayerIndex
-          .clamp(0, widget.project.layers.length - 1);
-      final layer = widget.project.layers[curIdx];
-      final warped = _liquifyResult;
       final moved = d != null && d.points.length > 1;
-      if (d != null) {
-        layer.drawables.removeWhere((x) => x.id == d.id);
-      }
-      if (warped != null && moved && _liquifyWarped) {
-        // Bake the warped raster into the layer; its original content is
-        // discarded (it is baked inside the warp result).
-        _liqStashImage?.dispose();
-        _liqStashImage = null;
-        _liqStashDrawables = [];
-        pp.bakeLiquifyResult(layer, warped);
+      if (d != null && moved && _liquifyWarped) {
+        // Commit: keep the liquify overlay in the layer. It renders the
+        // warped raster on top of the intact original content, so undo and
+        // save/reload always fall back to the original (never blank).
+        // Warp image ownership moves to the drawable.
         final base = _liquifyBase;
         if (base != null) base.dispose();
-        final result = _liquifyResult;
-        if (result != null && !identical(result, warped)) result.dispose();
+        _liquifyBase = null;
+        _liquifyResult = null;
+        _markUnsaved(pp);
       } else {
-        // Tap without movement (or the warp never ran): restore content.
-        _restoreLiquifyStash(pp);
+        // Tap without movement (or the warp never ran): drop the overlay.
+        if (d != null) _removeLiquifyOverlay(d.id, pp);
         _disposeLiquifyImages();
       }
     } finally {
@@ -524,9 +661,49 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
 
     if (tp.currentTool == ToolType.fill) {
-      pp.saveSnapshot();
-      final hit = _hitTest(canvasPos);
-      if (hit != null) pp.toggleFillDrawable(hit, tp.primaryColor);
+      // PS-style paint bucket: flood fill the clicked region of the
+      // flattened canvas and commit the filled area as a span-based
+      // drawable on the active layer.
+      if (!_isOnCanvas(canvasPos)) return;
+      final layer = widget.project.layers[widget.project.currentLayerIndex
+          .clamp(0, widget.project.layers.length - 1)];
+      if (layer.locked) return;
+      ui.Image? snap;
+      try {
+        snap = await pp.rasterizeCanvas();
+        final byteData = await snap.toByteData();
+        if (byteData == null) return;
+        final bytes = byteData.buffer.asUint8List();
+        final mask = SelectionMask(snap.width, snap.height);
+        mask.floodFill(canvasPos, bytes, 32, true);
+        if (mask.isEmpty) return;
+        final spans = mask.extractSpans();
+        pp.saveSnapshot();
+        final drawable = Drawable(
+          id: const Uuid().v4(),
+          points: [canvasPos],
+          color: tp.primaryColor,
+          opacity: tp.brushOpacity,
+          fillSpans: spans,
+        );
+        pp.addDrawable(drawable);
+        pp.refresh();
+      } catch (e) {
+        _log.error('fill failed: $e');
+      } finally {
+        snap?.dispose();
+      }
+      return;
+    }
+
+    if (tp.currentTool == ToolType.text) {
+      // PS-like text tool: pick the anchor, type the text, commit a text
+      // drawable that can be moved with the move tool later.
+      if (!_isOnCanvas(canvasPos)) return;
+      final layer = widget.project.layers[widget.project.currentLayerIndex
+          .clamp(0, widget.project.layers.length - 1)];
+      if (layer.locked) return;
+      await _promptTextAndPlace(canvasPos, pp, tp);
       return;
     }
 
@@ -603,6 +780,26 @@ class _PaintCanvasState extends State<PaintCanvas> {
     // Brush/eraser/shape (rect/ellipse) start is deferred to _tryBeginDrag
   }
 
+  /// Text tool: ask for the string, then commit a text drawable anchored at
+  /// the tapped canvas position.
+  Future<void> _promptTextAndPlace(
+      Offset canvasPos, ProjectProvider pp, ToolProvider tp) async {
+    final result = await showTextInputDialog(context);
+    if (result == null || result.text.trim().isEmpty) return;
+    if (!mounted) return;
+    pp.saveSnapshot();
+    final drawable = Drawable(
+      id: const Uuid().v4(),
+      points: [canvasPos],
+      color: tp.primaryColor,
+      opacity: 1.0,
+      textData: result.text,
+      fontSize: result.fontSize,
+    );
+    pp.addDrawable(drawable);
+    pp.refresh();
+  }
+
   void _tryBeginDrag(Offset pos, Size areaSize, {Offset? canvasStart}) {
     final tp = context.read<ToolProvider>();
     final pp = context.read<ProjectProvider>();
@@ -610,6 +807,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
     if (tp.currentTool == ToolType.smudge) {
       if (!_isOnCanvas(canvasPos)) return;
+      if (_smudgeCommitting) return; // previous smear still settling
       pp.saveSnapshot();
       _stabilizerQueue.clear();
       // Seed velocity tracking from the pen-down event (not the drag-start
@@ -630,6 +828,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
       _dragConfirmed = true;
+      _smudgeState = null;
+      _smudgeLast = canvasPos;
+      _smudgePendingMove = null;
+      _smudgeBusy = false;
+      _smudgeRadius = max(6.0, tp.brushSize * 0.55);
       _captureSmudgeSource();
       return;
     }
@@ -673,18 +876,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
       // already carries the real speed of the gesture.
       _lastPointerTime = _downTime;
       _lastPointerPos = _downScreenPos;
-      // Stash the layer content and take a raster of it as the warp base.
-      // During the drag the layer renders ONLY the liquify preview (the
-      // warped raster), so pixels visibly move instead of being stamped.
-      _liqStashImage = layer.image;
-      _liqStashImageOffset = layer.imageOffset;
-      _liqStashImageRotation = layer.imageRotation;
-      _liqStashImageScale = layer.imageScale;
-      _liqStashImageFlipH = layer.imageFlipH;
-      _liqStashImageFlipV = layer.imageFlipV;
-      _liqStashDrawables = layer.drawables;
-      layer.image = null;
-      layer.drawables = [];
+      // The layer content stays untouched. A liquify overlay drawable is
+      // added on top; while the drag runs it shows the warped raster (the
+      // base content is identical, so it looks seamless).
       final drawable = Drawable(
         id: const Uuid().v4(),
         points: [canvasPos],
@@ -693,6 +887,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         strokeWidth: tp.brushSize,
         opacity: 1.0,
         brushType: tp.brushType,
+        isLiquify: true,
       );
       _currentDrawable = drawable;
       layer.drawables.add(drawable);
@@ -818,6 +1013,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
           shapeType: ShapeType.rect,
           points: [_gradientStart!, canvasPos],
           color: tp.gradientStartColor,
+          strokeWidth: tp.brushSize,
+          opacity: tp.brushOpacity,
           isFilled: true,
           isGradient: true,
           gradientStops: [
@@ -892,9 +1089,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
+    if (tp.currentTool == ToolType.smudge) {
+      // Smudge also bypasses the threshold once the drag begins: the smear
+      // itself is the feedback, same as liquify.
+      _onSmudgeMove(canvasPos, pp);
+      return;
+    }
+
     if (tp.currentTool == ToolType.brush ||
         tp.currentTool == ToolType.eraser ||
-        tp.currentTool == ToolType.smudge ||
         tp.currentTool == ToolType.willowLeaf) {
       final as = context.read<AppSettings>();
       final now = DateTime.now();
@@ -1041,6 +1244,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
     // Liquify: bake (or cancel) the warp.
     if (tp.currentTool == ToolType.liquify) {
       _finishLiquify(pp);
+      return;
+    }
+
+    // Smudge: finalize the evolving smear overlay.
+    if (tp.currentTool == ToolType.smudge && _currentDrawable != null) {
+      _finishSmudge(pp);
       return;
     }
 
@@ -1215,6 +1424,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
                 _dragConfirmed = false;
                 if (tp.currentTool == ToolType.liquify) {
                   _cancelLiquify(pp);
+                } else if (tp.currentTool == ToolType.smudge) {
+                  _cancelSmudge(pp);
                 }
                 _handleMultiTouch(details.pointerCount);
                 return;
@@ -1412,11 +1623,46 @@ class _CanvasPainter extends CustomPainter {
       }
     }
 
-    if (currentDrawable != null && !currentDrawable!.isLiquify) {
-      // Liquify drawables are already in the layer's drawable list and
-      // render their warp raster there; drawing them again here would
+    if (currentDrawable != null &&
+        !currentDrawable!.isLiquify &&
+        !currentDrawable!.isSmudge) {
+      // Liquify / smudge overlays are already in the layer's drawable list
+      // and render their raster there; drawing them again here would
       // double-blend their semi-transparent edges.
       currentDrawable!.draw(canvas, Paint());
+      // While dragging a gradient, also show the direction/extent guide
+      // line so the user can see exactly what defines the ramp.
+      if (currentDrawable!.isGradient && currentDrawable!.points.length >= 2) {
+        final a = currentDrawable!.points.first;
+        final b = currentDrawable!.points.last;
+        final guideWidth = 1.4 / viewScale;
+        canvas.drawLine(
+          a, b,
+          Paint()
+            ..color = Colors.black.withValues(alpha: 0.55)
+            ..strokeWidth = guideWidth * 2.6
+            ..strokeCap = StrokeCap.round,
+        );
+        canvas.drawLine(
+          a, b,
+          Paint()
+            ..color = Colors.white
+            ..strokeWidth = guideWidth
+            ..strokeCap = StrokeCap.round,
+        );
+        final dotR = 4.0 / viewScale;
+        for (final pt in [a, b]) {
+          canvas.drawCircle(pt, dotR, Paint()..color = Colors.white);
+          canvas.drawCircle(
+            pt,
+            dotR,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = guideWidth
+              ..color = Colors.black.withValues(alpha: 0.8),
+          );
+        }
+      }
     }
 
     // Selection overlay: blue tint while selecting; during editing only

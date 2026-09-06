@@ -115,8 +115,30 @@ class SelectionMask {
     }
   }
 
-  void fillCircle(Offset center, double radius, bool set) {
-    final v = set ? 255 : 0;
+  /// Extracts the mask as flat horizontal runs [y, x0, x1, y, x0, x1, …]
+  /// (x1 inclusive). Compact and directly renderable as rects — used by the
+  /// paint-bucket fill drawable.
+  List<int> extractSpans() {
+    final spans = <int>[];
+    for (int y = 0; y < height; y++) {
+      final row = y * width;
+      int x = 0;
+      while (x < width) {
+        if (_data[row + x] != 0) {
+          final x0 = x;
+          while (x < width && _data[row + x] != 0) {
+            x++;
+          }
+          spans..add(y)..add(x0)..add(x - 1);
+        } else {
+          x++;
+        }
+      }
+    }
+    return spans;
+  }
+
+  void fillCircle(Offset center, double radius, bool set) {    final v = set ? 255 : 0;
     final r2 = radius * radius;
     final x0 = (center.dx - radius).floor().clamp(0, width - 1);
     final y0 = (center.dy - radius).floor().clamp(0, height - 1);
