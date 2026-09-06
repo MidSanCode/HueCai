@@ -424,6 +424,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (warped != null && moved && _liquifyWarped) {
         // Bake the warped raster into the layer; its original content is
         // discarded (it is baked inside the warp result).
+        _liqStashImage?.dispose();
         _liqStashImage = null;
         _liqStashDrawables = [];
         pp.bakeLiquifyResult(layer, warped);

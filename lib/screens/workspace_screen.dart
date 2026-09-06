@@ -669,6 +669,17 @@ class _ProjectCardState extends State<_ProjectCard> {
     final allDrawables = <Drawable>[];
     for (final layer in loaded.layers) {
       if (!layer.visible) continue;
+      // Raster layer content (baked selection applies, liquify warps,
+      // imported images) isn't a drawable — wrap it so replay still shows
+      // everything painted before the baked strokes.
+      if (layer.image != null) {
+        allDrawables.add(Drawable(
+          id: 'replay-img-${layer.id}',
+          points: [Offset.zero],
+          liquifyImage: layer.image,
+          isLiquify: true,
+        ));
+      }
       allDrawables.addAll(layer.drawables);
     }
     if (allDrawables.isEmpty) return;

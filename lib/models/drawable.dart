@@ -472,7 +472,9 @@ class Drawable {
       final len = (b - a).distance;
       final avgW = (wa + wb) / 2;
       final step = max(0.8, avgW * 0.32);
-      final stamps = (len / step).ceil().clamp(1, 64);
+      // Cap keeps pathological segments cheap; t still spans the whole
+      // segment so spacing only coarsens, never gaps.
+      final stamps = (len / step).ceil().clamp(1, 240);
       final rng = Random((id.hashCode ^ (i * 2654435761)) & 0x7fffffff);
       int skipRun = 0;
       for (int s = 0; s <= stamps; s++) {
