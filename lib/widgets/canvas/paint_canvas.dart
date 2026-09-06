@@ -663,11 +663,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
     if (tp.currentTool == ToolType.fill) {
       // PS-style paint bucket: flood fill the clicked region of the
       // flattened canvas and commit the filled area as a span-based
-      // drawable on the active layer.
+      // drawable on the active layer. Tolerance and edge grow/shrink are
+      // user-configurable; the edge is feathered for anti-aliasing.
       if (!_isOnCanvas(canvasPos)) return;
       final layer = widget.project.layers[widget.project.currentLayerIndex
           .clamp(0, widget.project.layers.length - 1)];
       if (layer.locked) return;
+      final as = context.read<AppSettings>();
       ui.Image? snap;
       try {
         snap = await pp.rasterizeCanvas();
@@ -675,9 +677,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
         if (byteData == null) return;
         final bytes = byteData.buffer.asUint8List();
         final mask = SelectionMask(snap.width, snap.height);
-        mask.floodFill(canvasPos, bytes, 32, true);
+        mask.floodFill(canvasPos, bytes, as.fillTolerance, true);
+        if (as.fillGrowShrink != 0) mask.grow(as.fillGrowShrink);
         if (mask.isEmpty) return;
-        final spans = mask.extractSpans();
+        final spans = mask.extractSpans(antiAlias: as.fillAntiAlias);
         pp.saveSnapshot();
         final drawable = Drawable(
           id: const Uuid().v4(),

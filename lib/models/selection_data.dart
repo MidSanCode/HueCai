@@ -115,27 +115,117 @@ class SelectionMask {
     }
   }
 
-  /// Extracts the mask as flat horizontal runs [y, x0, x1, y, x0, x1, …]
-  /// (x1 inclusive). Compact and directly renderable as rects — used by the
-  /// paint-bucket fill drawable.
-  List<int> extractSpans() {
+  /// Extracts the mask as flat horizontal runs [y, x0, x1, alpha, …]
+  /// (x1 inclusive, alpha 0-255). Compact and directly renderable as rects —
+  /// used by the paint-bucket fill drawable. With [antiAlias] the boundary
+  /// gets feathered partial-alpha runs (PS-style soft selection edge).
+  List<int> extractSpans({bool antiAlias = false}) {
+    final alphaMap = antiAlias ? buildAlphaMap() : null;
     final spans = <int>[];
     for (int y = 0; y < height; y++) {
       final row = y * width;
       int x = 0;
       while (x < width) {
-        if (_data[row + x] != 0) {
+        final v = _data[row + x];
+        if (v != 0) {
           final x0 = x;
+          final a0 = alphaMap != null ? alphaMap[row + x] : 255;
+          x++;
           while (x < width && _data[row + x] != 0) {
+            final a = alphaMap != null ? alphaMap[row + x] : 255;
+            if (a != a0) break;
             x++;
           }
-          spans..add(y)..add(x0)..add(x - 1);
+          spans..add(y)..add(x0)..add(x - 1)..add(a0);
         } else {
           x++;
         }
       }
     }
     return spans;
+  }
+
+  /// Grows the region by [px] pixels (positive) or shrinks it (negative),
+  /// morphologically, via a chamfer distance transform.
+  void grow(int px) {
+    if (px == 0) return;
+    if (px > 0) {
+      final dist = _distanceToNearest(target: true);
+      for (int i = 0; i < _data.length; i++) {
+        if (_data[i] == 0 && dist[i] <= px) _data[i] = 255;
+      }
+    } else {
+      final px2 = -px;
+      final dist = _distanceToNearest(target: false);
+      for (int i = 0; i < _data.length; i++) {
+        if (_data[i] != 0 && dist[i] <= px2) _data[i] = 0;
+      }
+    }
+  }
+
+  /// Per-pixel edge alpha for anti-aliased rendering: interior pixels get
+  /// full alpha, the boundary ring is feathered (~50-70%) so diagonal
+  /// stair-steps become a smooth transition.
+  Uint8List buildAlphaMap() {
+    final dist = _distanceToNearest(target: false);
+    final out = Uint8List(_data.length);
+    for (int i = 0; i < _data.length; i++) {
+      if (_data[i] == 0) {
+        out[i] = 0;
+      } else {
+        out[i] = (dist[i] * 127.5).round().clamp(0, 255);
+      }
+    }
+    return out;
+  }
+
+  /// Chamfer 3-4 distance transform: distance (in pixels) from every pixel
+  /// to the nearest pixel whose set-state equals [target].
+  Float32List _distanceToNearest({required bool target}) {
+    final inf = 1 << 24;
+    final dist = Int32List(_data.length);
+    for (int i = 0; i < _data.length; i++) {
+      final isTarget = (_data[i] != 0) == target;
+      dist[i] = isTarget ? 0 : inf;
+    }
+    // Forward pass (top-left → bottom-right).
+    for (int y = 0; y < height; y++) {
+      final row = y * width;
+      for (int x = 0; x < width; x++) {
+        final i = row + x;
+        int d = dist[i];
+        if (x > 0 && dist[i - 1] + 3 < d) d = dist[i - 1] + 3;
+        if (y > 0) {
+          final up = i - width;
+          if (dist[up] + 3 < d) d = dist[up] + 3;
+          if (x > 0 && dist[up - 1] + 4 < d) d = dist[up - 1] + 4;
+          if (x < width - 1 && dist[up + 1] + 4 < d) d = dist[up + 1] + 4;
+        }
+        dist[i] = d;
+      }
+    }
+    // Backward pass (bottom-right → top-left).
+    for (int y = height - 1; y >= 0; y--) {
+      final row = y * width;
+      for (int x = width - 1; x >= 0; x--) {
+        final i = row + x;
+        int d = dist[i];
+        if (x < width - 1 && dist[i + 1] + 3 < d) d = dist[i + 1] + 3;
+        if (y < height - 1) {
+          final dn = i + width;
+          if (dist[dn] + 3 < d) d = dist[dn] + 3;
+          if (x < width - 1 && dist[dn + 1] + 4 < d) d = dist[dn + 1] + 4;
+          if (x > 0 && dist[dn - 1] + 4 < d) d = dist[dn - 1] + 4;
+        }
+        dist[i] = d;
+      }
+    }
+    // 3 units ≈ 1 px (4 units ≈ √2 px).
+    final out = Float32List(_data.length);
+    for (int i = 0; i < dist.length; i++) {
+      out[i] = dist[i] / 3.0;
+    }
+    return out;
   }
 
   void fillCircle(Offset center, double radius, bool set) {    final v = set ? 255 : 0;

@@ -19,6 +19,13 @@ class AppSettings extends ChangeNotifier {
   double _pressureMaxScale = 1.0;
   double _velocityPressureBlend = 0.0;
   bool _hasPressure = false;
+
+  // Paint-bucket fill: colour tolerance (0-255), edge grow/shrink in pixels
+  // (positive expands the region, negative contracts it) and edge
+  // anti-aliasing (feathered boundary alpha).
+  int _fillTolerance = 32;
+  int _fillGrowShrink = 0;
+  bool _fillAntiAlias = true;
   List<String> _toolbarTools = [
     'brush', 'eraser', 'shape', 'select',
     'smudge', 'willowLeaf',
@@ -38,6 +45,9 @@ class AppSettings extends ChangeNotifier {
   double get pressureMaxScale => _pressureMaxScale;
   double get velocityPressureBlend => _velocityPressureBlend;
   bool get hasPressure => _hasPressure;
+  int get fillTolerance => _fillTolerance;
+  int get fillGrowShrink => _fillGrowShrink;
+  bool get fillAntiAlias => _fillAntiAlias;
   List<String> get toolbarTools => _toolbarTools;
 
   List<ToolType> get toolbarToolTypes =>
@@ -73,6 +83,9 @@ class AppSettings extends ChangeNotifier {
         _pressureMinScale = (json['pressureMinScale'] as num?)?.toDouble() ?? 0.3;
         _pressureMaxScale = (json['pressureMaxScale'] as num?)?.toDouble() ?? 1.0;
         _velocityPressureBlend = (json['velocityPressureBlend'] as num?)?.toDouble() ?? 0.0;
+        _fillTolerance = (json['fillTolerance'] as num?)?.toInt() ?? 32;
+        _fillGrowShrink = (json['fillGrowShrink'] as num?)?.toInt() ?? 0;
+        _fillAntiAlias = json['fillAntiAlias'] as bool? ?? true;
         _toolbarTools = (json['toolbarTools'] as List?)
             ?.map((e) => e as String)
             .toList() ?? _toolbarTools;
@@ -99,6 +112,9 @@ class AppSettings extends ChangeNotifier {
         'pressureMinScale': _pressureMinScale,
         'pressureMaxScale': _pressureMaxScale,
         'velocityPressureBlend': _velocityPressureBlend,
+        'fillTolerance': _fillTolerance,
+        'fillGrowShrink': _fillGrowShrink,
+        'fillAntiAlias': _fillAntiAlias,
         'toolbarTools': _toolbarTools,
       }));
     } catch (_) {}
@@ -132,6 +148,12 @@ class AppSettings extends ChangeNotifier {
   void setPressureMinScale(double v) { _pressureMinScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setPressureMaxScale(double v) { _pressureMaxScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }
   void setVelocityPressureBlend(double v) { _velocityPressureBlend = v.clamp(0.0, 1.0); _save(); notifyListeners(); }
+
+  void setFillTolerance(int v) { _fillTolerance = v.clamp(0, 255); _save(); notifyListeners(); }
+
+  void setFillGrowShrink(int v) { _fillGrowShrink = v.clamp(-25, 25); _save(); notifyListeners(); }
+
+  void setFillAntiAlias(bool v) { _fillAntiAlias = v; _save(); notifyListeners(); }
 
   void setToolbarTools(List<String> tools) {
     _toolbarTools = tools;

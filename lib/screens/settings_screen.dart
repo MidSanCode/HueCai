@@ -238,6 +238,58 @@ class _DrawingContentState extends State<_DrawingContent> {
             ),
           ),
         ]),
+        _sectionCard(theme: theme, title: 'settings.fill'.tr(), children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: [
+                Text('settings.fill_tolerance'.tr(), style: const TextStyle(fontSize: 13)),
+                const Spacer(),
+                Text('${settings.fillTolerance}', style: const TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Slider(
+              value: settings.fillTolerance.toDouble(),
+              min: 0,
+              max: 255,
+              divisions: 255,
+              label: '${settings.fillTolerance}',
+              onChanged: (v) => settings.setFillTolerance(v.round()),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: [
+                Text('settings.fill_grow_shrink'.tr(), style: const TextStyle(fontSize: 13)),
+                const Spacer(),
+                Text(
+                  '${settings.fillGrowShrink > 0 ? '+' : ''}${settings.fillGrowShrink} px',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Slider(
+              value: settings.fillGrowShrink.toDouble(),
+              min: -25,
+              max: 25,
+              divisions: 50,
+              label: '${settings.fillGrowShrink > 0 ? '+' : ''}${settings.fillGrowShrink}',
+              onChanged: (v) => settings.setFillGrowShrink(v.round()),
+            ),
+          ),
+          SwitchListTile(
+            title: Text('settings.fill_antialias'.tr(), style: const TextStyle(fontSize: 13)),
+            value: settings.fillAntiAlias,
+            onChanged: (v) => settings.setFillAntiAlias(v),
+          ),
+        ]),
         _sectionCard(theme: theme, title: 'settings.toolbar'.tr(), children: [
           ListTile(
             title: Text('settings.customize_toolbar'.tr()),

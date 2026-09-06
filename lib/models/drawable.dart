@@ -119,7 +119,7 @@ class Drawable {
     }
     if (fillSpans != null) {
       final spans = fillSpans!;
-      for (int i = 0; i + 2 < spans.length; i += 3) {
+      for (int i = 0; i + 3 < spans.length; i += 4) {
         if (spans[i + 1] < minX) minX = spans[i + 1].toDouble();
         if (spans[i] < minY) minY = spans[i].toDouble();
         if (spans[i + 2] + 1 > maxX) maxX = spans[i + 2] + 1.0;
@@ -393,14 +393,29 @@ class Drawable {
 
   void _drawFillSpans(Canvas canvas) {
     final spans = fillSpans!;
-    final p = Paint()
-      ..style = PaintingStyle.fill
-      ..color = color.withValues(alpha: opacity);
-    for (int i = 0; i + 2 < spans.length; i += 3) {
+    // Spans are [y, x0, x1, alpha, …]; full-alpha runs share one paint,
+    // feathered runs (anti-aliased edge) get their own alpha.
+    Paint? solid;
+    for (int i = 0; i + 3 < spans.length; i += 4) {
       final y = spans[i].toDouble();
       final x0 = spans[i + 1].toDouble();
       final x1 = spans[i + 2].toDouble();
-      canvas.drawRect(Rect.fromLTRB(x0, y, x1 + 1.0, y + 1.0), p);
+      final a = spans[i + 3];
+      final rect = Rect.fromLTRB(x0, y, x1 + 1.0, y + 1.0);
+      if (a >= 250) {
+        solid ??= Paint()
+          ..style = PaintingStyle.fill
+          ..color = color.withValues(alpha: opacity);
+        canvas.drawRect(rect, solid);
+      } else if (a > 0) {
+        canvas.drawRect(
+          rect,
+          Paint()
+            ..style = PaintingStyle.fill
+            ..color = color
+                .withValues(alpha: opacity * (a / 255.0)),
+        );
+      }
     }
   }
 
