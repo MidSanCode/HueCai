@@ -94,6 +94,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
   // Perspective-guide dragging (with the move tool).
   int? _tabDragIndex;
 
+  // Curve tool: dragging from a freshly placed anchor pulls its bézier
+  // out-handle until pointer-up.
+  bool _curveDraggingHandle = false;
+
+  // Curve tool: desktop-hover preview of a mid-segment insertion point.
+  Offset? _curveHoverInsert;
+
   // Symmetry: while enabled, brush/eraser strokes commit a mirrored twin
   // drawable on the same layer, kept in sync during the drag.
   Drawable? _mirrorTwin;
@@ -840,6 +847,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
+    // Bézier curve tool: multi-click placement with ✓ confirm / ✗
+    // remove-last-anchor buttons, mid-segment anchor insertion, and
+    // drag-from-anchor to pull a bézier out-handle.
+    if (tp.currentTool == ToolType.shape &&
+        tp.currentShape == ShapeType.curve) {
+      _handleCurveDown(canvasPos, pp, tp);
+      return;
+    }
+
     // Multi-click shapes: line, polygon
     if (tp.currentTool == ToolType.shape &&
         (tp.currentShape == ShapeType.line ||
@@ -912,6 +928,138 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
     // Brush/eraser/shape (rect/ellipse) start is deferred to _tryBeginDrag
+  }
+
+  // ─── Curve tool (multi-click + bézier) ─────────────────────────
+
+  void _handleCurveDown(Offset canvasPos, ProjectProvider pp, ToolProvider tp) {
+    final layer = widget.project.layers[widget.project.currentLayerIndex
+        .clamp(0, widget.project.layers.length - 1)];
+    if (layer.locked) return;
+
+    final placing = _isPlacingShapePoints &&
+        _currentDrawable != null &&
+        _currentDrawable!.isShape &&
+        _currentDrawable!.shapeType == ShapeType.curve;
+
+    if (!placing) {
+      // Start a new curve with a single anchor.
+      pp.saveSnapshot();
+      final drawable = Drawable(
+        id: const Uuid().v4(),
+        isShape: true,
+        shapeType: ShapeType.curve,
+        points: [canvasPos],
+        curveHandles: [null],
+        color: tp.primaryColor,
+        strokeWidth: tp.brushSize,
+        isFilled: false,
+      );
+      _currentDrawable = drawable;
+      pp.addDrawable(drawable);
+      _isPlacingShapePoints = true;
+      _dragConfirmed = true;
+      _curveDraggingHandle = false;
+      pp.refresh();
+      return;
+    }
+
+    final d = _currentDrawable!;
+    final viewScale = context.read<CanvasProvider>().scale;
+
+    // ✓ confirm / ✗ remove-last buttons sit near the last anchor.
+    final btn = _curveButtonHit(canvasPos, d, viewScale);
+    if (btn == 1) {
+      _commitCurve(pp);
+      return;
+    }
+    if (btn == 2) {
+      _removeLastCurveAnchor(pp);
+      return;
+    }
+
+    // Clicking on an existing segment inserts an anchor at that spot.
+    final seg = _curveSegmentHit(canvasPos, d, viewScale);
+    if (seg != null) {
+      pp.saveSnapshot();
+      d.points.insert(seg.$1, seg.$2);
+      d.curveHandles!.insert(seg.$1, null);
+      d.contentVersion++;
+      pp.updateDrawable(d.id, d);
+      _curveDraggingHandle = false;
+      pp.refresh();
+      return;
+    }
+
+    // New anchor; dragging away from it pulls its bézier out-handle.
+    pp.saveSnapshot();
+    d.points.add(canvasPos);
+    d.curveHandles!.add(null);
+    d.contentVersion++;
+    pp.updateDrawable(d.id, d);
+    _curveDraggingHandle = true;
+    pp.refresh();
+  }
+
+  void _commitCurve(ProjectProvider pp) {
+    final d = _currentDrawable;
+    if (d == null) return;
+    _isPlacingShapePoints = false;
+    _curveDraggingHandle = false;
+    _curveHoverInsert = null;
+    d.selected = true;
+    pp.updateDrawable(d.id, d);
+    _currentDrawable = null;
+    pp.refresh();
+  }
+
+  void _removeLastCurveAnchor(ProjectProvider pp) {
+    final d = _currentDrawable;
+    if (d == null) return;
+    pp.saveSnapshot();
+    if (d.points.isNotEmpty) d.points.removeLast();
+    if (d.curveHandles != null && d.curveHandles!.isNotEmpty) {
+      d.curveHandles!.removeLast();
+    }
+    d.contentVersion++;
+    _curveHoverInsert = null;
+    if (d.points.isEmpty) {
+      // Nothing left to place: cancel the whole curve.
+      pp.deleteDrawable(d.id);
+      _currentDrawable = null;
+      _isPlacingShapePoints = false;
+      _curveDraggingHandle = false;
+    } else {
+      pp.updateDrawable(d.id, d);
+    }
+    pp.refresh();
+  }
+
+  /// 1 = confirm, 2 = remove last, 0 = none.
+  int _curveButtonHit(Offset p, Drawable d, double viewScale) {
+    if (d.points.isEmpty) return 0;
+    final g = curveButtonGeometry(d.points.last, viewScale);
+    if ((p - g.confirm).distance <= g.radius * 1.6) return 1;
+    if ((p - g.cancel).distance <= g.radius * 1.6) return 2;
+    return 0;
+  }
+
+  /// Index + projected position of the segment under [p], if any.
+  (int, Offset)? _curveSegmentHit(Offset p, Drawable d, double viewScale) {
+    if (d.points.length < 2) return null;
+    final tol = 12.0 / viewScale;
+    for (int i = 1; i < d.points.length; i++) {
+      final a = d.points[i - 1];
+      final b = d.points[i];
+      final seg = b - a;
+      final len2 = seg.dx * seg.dx + seg.dy * seg.dy;
+      if (len2 < 1) continue;
+      double t = ((p - a).dx * seg.dx + (p - a).dy * seg.dy) / len2;
+      t = t.clamp(0.0, 1.0);
+      final proj = a + seg * t;
+      if ((p - proj).distance <= tol) return (i, proj);
+    }
+    return null;
   }
 
   /// Creates (or clears) the symmetry mirror twin for a new stroke.
@@ -1394,6 +1542,29 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
+    if (tp.currentTool == ToolType.shape &&
+        tp.currentShape == ShapeType.curve &&
+        _currentDrawable != null) {
+      // Dragging away from the freshly placed anchor pulls its bézier
+      // out-handle; dragging elsewhere does nothing.
+      if (_curveDraggingHandle) {
+        final d = _currentDrawable!;
+        final anchor = d.points.last;
+        final handle = canvasPos;
+        // Minimum pull distance so a plain click stays a corner anchor.
+        if ((handle - anchor).distance >
+            6.0 / context.read<CanvasProvider>().scale) {
+          while (d.curveHandles!.length < d.points.length) {
+            d.curveHandles!.add(null);
+          }
+          d.curveHandles![d.points.length - 1] = handle;
+          d.contentVersion++;
+          pp.updateDrawableSilent(d.id, d);
+        }
+      }
+      return;
+    }
+
     if (tp.currentTool == ToolType.liquify) {
       // Liquify ignores the drag threshold: content must follow the pointer
       // immediately (its own warps are what make the drag visible).
@@ -1569,6 +1740,28 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
+    // Curve: stay in placement mode (anchors accumulate until ✓/✗);
+    // just end any in-progress bézier handle drag.
+    if (tp.currentTool == ToolType.shape &&
+        tp.currentShape == ShapeType.curve &&
+        _isPlacingShapePoints &&
+        _currentDrawable != null) {
+      _curveDraggingHandle = false;
+      pp.refresh();
+      return;
+    }
+
+    // Line / polygon placement: a tap adds its point and keeps waiting for
+    // more (or auto-finalizes); pointer-up must not clear the drawable.
+    if (tp.currentTool == ToolType.shape &&
+        (tp.currentShape == ShapeType.line ||
+            tp.currentShape == ShapeType.polygon) &&
+        _isPlacingShapePoints &&
+        _currentDrawable != null) {
+      pp.refresh();
+      return;
+    }
+
     // Select tool: apply selection
     if (tp.currentTool == ToolType.select && _selectStart != null) {
       if (pp.selectionPhase == SelectionPhase.editing) {
@@ -1637,6 +1830,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _currentDrawable = null;
     }
     _isPlacingShapePoints = false;
+    _curveDraggingHandle = false;
+    _curveHoverInsert = null;
   }
 
   Offset _snapShapeEnd(ToolProvider tp, Offset end) {
@@ -1727,6 +1922,20 @@ class _PaintCanvasState extends State<PaintCanvas> {
           },
           onPointerHover: (event) {
             _currentPressure = event.pressure;
+            // Curve tool: remember a mid-segment insertion candidate so the
+            // painter can highlight it (desktop hover; touch gets it on tap).
+            if (tp.currentTool == ToolType.shape &&
+                tp.currentShape == ShapeType.curve &&
+                _isPlacingShapePoints &&
+                _currentDrawable != null) {
+              final hit = _curveSegmentHit(
+                  _toCanvas(event.position, areaSize),
+                  _currentDrawable!,
+                  context.read<CanvasProvider>().scale);
+              final changed = hit?.$2 != _curveHoverInsert;
+              _curveHoverInsert = hit?.$2;
+              if (changed) setState(() {});
+            }
           },
           onPointerDown: (event) {
             _currentPressure = event.pressure;
@@ -1751,6 +1960,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
                 _downScreenPos = null;
                 _dragConfirmed = false;
                 _tabDragIndex = null;
+                // A pinch (likely smart-undo) must not race an in-progress
+                // multi-click shape; cancel the placement cleanly.
+                if (_isPlacingShapePoints) {
+                  _cancelMultiClickShape();
+                }
                 if (tp.currentTool == ToolType.liquify) {
                   _cancelLiquify(pp);
                 } else if (tp.currentTool == ToolType.smudge) {
@@ -1846,6 +2060,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
                           perspectivePoints: tp.perspectiveGuideEnabled
                               ? _perspectiveViewPoints()
                               : const [],
+                          curveHoverInsert: _curveHoverInsert,
+                          curvePlacing: _isPlacingShapePoints,
                           selectionMaskImage: pp.selectionMaskImage,
                           selectionClipImage: pp.selectionClipImage,
                           selectionClipBounds: pp.selectionClipBounds,
@@ -1904,6 +2120,19 @@ int layerContentVersion(Layer layer) => Object.hashAll([
       layer.imageVersion,
     ]);
 
+/// Screen-space geometry of the curve tool's ✓/✗ buttons, anchored to the
+/// last placed anchor. Shared by the gesture code and the painter.
+({Offset confirm, Offset cancel, double radius}) curveButtonGeometry(
+    Offset lastAnchor, double viewScale) {
+  final r = 11.0 / viewScale;
+  final gap = 16.0 / viewScale;
+  return (
+    confirm: lastAnchor + Offset(gap, -gap),
+    cancel: lastAnchor + Offset(-gap, gap),
+    radius: r,
+  );
+}
+
 class _BackgroundPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -1924,6 +2153,8 @@ class _CanvasPainter extends CustomPainter {
   final bool mirrorEnabled;
   final bool perspectiveEnabled;
   final List<Offset> perspectivePoints;
+  final bool curvePlacing;
+  final Offset? curveHoverInsert;
   final ui.Image? selectionMaskImage;
   final ui.Image? selectionClipImage;
   final Rect selectionClipBounds;
@@ -1945,6 +2176,8 @@ class _CanvasPainter extends CustomPainter {
     this.mirrorEnabled = false,
     this.perspectiveEnabled = false,
     this.perspectivePoints = const [],
+    this.curvePlacing = false,
+    this.curveHoverInsert,
     this.selectionMaskImage,
     this.selectionClipImage,
     this.selectionClipBounds = Rect.zero,
@@ -2055,6 +2288,105 @@ class _CanvasPainter extends CustomPainter {
               ..color = Colors.black.withValues(alpha: 0.8),
           );
         }
+      }
+    }
+
+    // Curve tool overlay: anchor squares, bézier handle lines, ✓/✗ buttons.
+    if (currentDrawable != null &&
+        currentDrawable!.isShape &&
+        currentDrawable!.shapeType == ShapeType.curve) {
+      final d = currentDrawable!;
+      const anchorR = 5.0;
+      final anchorPaint = Paint()..color = Colors.white;
+      final anchorStroke = Paint()
+        ..color = const Color(0xFF29B6F6)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5 / viewScale;
+
+      // Bézier handles: line from anchor to its out-handle + knob.
+      if (d.curveHandles != null) {
+        for (int i = 0; i < d.points.length && i < d.curveHandles!.length; i++) {
+          final h = d.curveHandles![i];
+          if (h == null) continue;
+          final a = d.points[i];
+          canvas.drawLine(
+            a, h,
+            Paint()
+              ..color = const Color(0xFF29B6F6).withValues(alpha: 0.75)
+              ..strokeWidth = 1.0 / viewScale,
+          );
+          canvas.drawCircle(h, anchorR * 0.55, anchorPaint);
+          canvas.drawCircle(h, anchorR * 0.55, anchorStroke);
+        }
+      }
+
+      // Anchor squares.
+      for (final pt in d.points) {
+        canvas.drawRect(
+          Rect.fromCircle(center: pt, radius: anchorR),
+          anchorPaint,
+        );
+        canvas.drawRect(
+          Rect.fromCircle(center: pt, radius: anchorR),
+          anchorStroke,
+        );
+      }
+
+      // Mid-segment insertion preview (desktop hover): hollow diamond.
+      if (curvePlacing && curveHoverInsert != null) {
+        final c = curveHoverInsert!;
+        final r = anchorR * 1.2;
+        canvas.drawPath(
+          ui.Path()
+            ..moveTo(c.dx, c.dy - r)
+            ..lineTo(c.dx + r, c.dy)
+            ..lineTo(c.dx, c.dy + r)
+            ..lineTo(c.dx - r, c.dy)
+            ..close(),
+          Paint()..color = const Color(0xFF29B6F6).withValues(alpha: 0.85),
+        );
+      }
+
+      // ✓ confirm / ✗ remove buttons next to the last anchor.
+      if (curvePlacing) {
+        final g = curveButtonGeometry(d.points.last, viewScale);
+        // ✓ green circle
+        canvas.drawCircle(g.confirm, g.radius, Paint()..color = const Color(0xFF2E7D32));
+        canvas.drawCircle(
+          g.confirm,
+          g.radius,
+          Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.2 / viewScale,
+        );
+        // ✗ red circle
+        canvas.drawCircle(g.cancel, g.radius, Paint()..color = const Color(0xFFC62828));
+        canvas.drawCircle(
+          g.cancel,
+          g.radius,
+          Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.2 / viewScale,
+        );
+        // Check / cross glyphs (drawn as strokes so no TextPainter needed).
+        final glyph = Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0 / viewScale
+          ..strokeCap = StrokeCap.round;
+        // ✓: two segments.
+        final c = g.confirm;
+        canvas.drawLine(c + Offset(-g.radius * 0.45, 0.5 / viewScale),
+            c + Offset(-g.radius * 0.1, g.radius * 0.4), glyph);
+        canvas.drawLine(c + Offset(-g.radius * 0.1, g.radius * 0.4),
+            c + Offset(g.radius * 0.45, -g.radius * 0.4), glyph);
+        // ✗: two crossing segments.
+        final x = g.cancel;
+        final q = g.radius * 0.4;
+        canvas.drawLine(x - Offset(q, q), x + Offset(q, q), glyph);
+        canvas.drawLine(x - Offset(-q, q), x + Offset(-q, q), glyph);
       }
     }
 

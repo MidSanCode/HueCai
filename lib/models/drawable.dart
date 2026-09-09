@@ -79,6 +79,11 @@ class Drawable {
   /// Paint-bucket fill region as flat runs of [y, x0, x1] triplets (row
   /// spans of the flood-filled area). Serializable, rendered as rects.
   List<int>? fillSpans;
+
+  /// Curve tool: per-anchor bézier out-handles (curveHandles[i] shapes the
+  /// segment leaving anchor i). Null entry / null list = corner anchor
+  /// (straight segment fallback). Parallel to [points].
+  List<Offset?>? curveHandles;
   BrushType brushType;
 
   Drawable({
@@ -105,6 +110,7 @@ class Drawable {
     this.textData,
     this.fontSize = 24.0,
     this.fillSpans,
+    this.curveHandles,
     this.brushType = BrushType.hardRound,
   }) : gradientStops = gradientStops ?? [];
 
@@ -130,6 +136,15 @@ class Drawable {
         if (spans[i] < minY) minY = spans[i].toDouble();
         if (spans[i + 2] + 1 > maxX) maxX = spans[i + 2] + 1.0;
         if (spans[i] + 1 > maxY) maxY = spans[i] + 1.0;
+      }
+    }
+    if (curveHandles != null) {
+      for (final h in curveHandles!) {
+        if (h == null) continue;
+        if (h.dx < minX) minX = h.dx;
+        if (h.dy < minY) minY = h.dy;
+        if (h.dx > maxX) maxX = h.dx;
+        if (h.dy > maxY) maxY = h.dy;
       }
     }
     return Rect.fromLTRB(minX, minY, maxX, maxY);
@@ -273,15 +288,32 @@ class Drawable {
         }
         break;
       case ShapeType.curve:
-        if (points.length >= 3) {
+        // Multi-anchor curve: anchors are joined by straight segments; an
+        // anchor with a bézier out-handle turns its outgoing segment into
+        // a cubic (the far end falls back to a proportional in-tangent).
+        if (points.isNotEmpty) {
+          if (points.length == 1) {
+            canvas.drawCircle(points.first, max(0.6, strokeWidth / 2), p);
+            break;
+          }
           final path = ui.Path()
             ..moveTo(points.first.dx, points.first.dy);
-          for (int i = 1; i < points.length - 1; i += 3) {
-            path.cubicTo(
-              points[i].dx, points[i].dy,
-              points[i + 1].dx, points[i + 1].dy,
-              points[i + 2].dx, points[i + 2].dy,
-            );
+          for (int i = 1; i < points.length; i++) {
+            final prev = points[i - 1];
+            final cur = points[i];
+            Offset? hPrev;
+            Offset? hCur;
+            if (curveHandles != null) {
+              if (i - 1 < curveHandles!.length) hPrev = curveHandles![i - 1];
+              if (i < curveHandles!.length) hCur = curveHandles![i];
+            }
+            if (hPrev == null && hCur == null) {
+              path.lineTo(cur.dx, cur.dy);
+            } else {
+              final c1 = hPrev ?? Offset.lerp(prev, cur, 1.0 / 3.0)!;
+              final c2 = hCur ?? Offset.lerp(prev, cur, 2.0 / 3.0)!;
+              path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, cur.dx, cur.dy);
+            }
           }
           canvas.drawPath(path, p);
         }
@@ -315,6 +347,7 @@ class Drawable {
     String? textData,
     double? fontSize,
     List<int>? fillSpans,
+    List<Offset?>? curveHandles,
   }) =>
       Drawable(
         id: id ?? this.id,
@@ -339,6 +372,7 @@ class Drawable {
         textData: textData ?? this.textData,
         fontSize: fontSize ?? this.fontSize,
         fillSpans: fillSpans ?? (this.fillSpans != null ? List.from(this.fillSpans!) : null),
+        curveHandles: curveHandles ?? (this.curveHandles != null ? List<Offset?>.from(this.curveHandles!) : null),
       );
 
   Map<String, dynamic> toJson() => {
@@ -361,6 +395,12 @@ class Drawable {
         if (textData != null) 'text': textData,
         if (textData != null) 'fontSize': fontSize,
         if (fillSpans != null) 'fillSpans': fillSpans,
+        if (curveHandles != null)
+          'curveHandles': curveHandles!
+              .map((h) => h == null
+                  ? null
+                  : {'x': h.dx, 'y': h.dy})
+              .toList(),
       };
 
   factory Drawable.fromJson(Map<String, dynamic> json) => Drawable(
@@ -402,6 +442,16 @@ class Drawable {
         fontSize: (json['fontSize'] as num?)?.toDouble() ?? 24.0,
         fillSpans: json['fillSpans'] != null
             ? (json['fillSpans'] as List).map((e) => (e as num).toInt()).toList()
+            : null,
+        curveHandles: json['curveHandles'] != null
+            ? (json['curveHandles'] as List)
+                .map((h) => h == null
+                    ? null
+                    : Offset(
+                        (h['x'] as num).toDouble(),
+                        (h['y'] as num).toDouble(),
+                      ))
+                .toList()
             : null,
       );
 
