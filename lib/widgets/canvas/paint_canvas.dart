@@ -210,19 +210,23 @@ class _PaintCanvasState extends State<PaintCanvas> {
   bool _handleEditHitTest(Offset canvasPos, ProjectProvider pp) {
     final bounds = pp.selectionClipBounds;
     if (bounds.width <= 0 || bounds.height <= 0) return false;
+    // Screen-constant grab radius: handles must stay grabbable at any zoom.
+    final viewScale = context.read<CanvasProvider>().scale;
     if (pp.transformMode == TransformMode.scale) {
-      final handles = _getScaleHandles(bounds);
+      final handles = _getScaleHandles();
+      final r = 12.0 / viewScale;
       for (int i = 0; i < handles.length; i++) {
-        if ((canvasPos - handles[i]).distance < 10) {
+        if ((canvasPos - handles[i]).distance < r) {
           _warpDragIndex = i;
           _selectStart = canvasPos;
           return true;
         }
       }
     } else {
-      final grid = _getWarpGrid(bounds, pp.editScaleX, pp.editScaleY);
+      final grid = _getWarpGrid();
+      final r = 14.0 / viewScale;
       for (int i = 0; i < grid.length; i++) {
-        if ((canvasPos - grid[i]).distance < 12) {
+        if ((canvasPos - grid[i]).distance < r) {
           _warpDragIndex = i;
           _selectStart = canvasPos;
           return true;
@@ -243,7 +247,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       final bounds = pp.selectionClipBounds;
       final sx = pp.editScaleX;
       final sy = pp.editScaleY;
-      final grid = _getWarpGrid(bounds, sx, sy);
+      final grid = _getWarpGrid();
       if (_warpDragIndex! < grid.length) {
         final delta = canvasPos - _selectStart!;
         _selectStart = canvasPos;
@@ -277,24 +281,37 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
   }
 
-  List<Offset> _getScaleHandles(Rect bounds) {
+  /// Scale-mode control points at their CURRENT transformed positions
+  /// (edit translate + accumulated scale) — identical to what the painter
+  /// draws, so the handles are always grabbable where they appear.
+  List<Offset> _getScaleHandles() {
+    final pp = context.read<ProjectProvider>();
+    final b = pp.selectionClipBounds;
+    final cx = b.center.dx + pp.editTranslate.dx;
+    final cy = b.center.dy + pp.editTranslate.dy;
+    final hw = b.width / 2 * pp.editScaleX;
+    final hh = b.height / 2 * pp.editScaleY;
+    final rect = Rect.fromCenter(center: Offset(cx, cy), width: hw * 2, height: hh * 2);
     return [
-      bounds.topLeft, bounds.topCenter, bounds.topRight,
-      bounds.centerLeft, bounds.centerRight,
-      bounds.bottomLeft, bounds.bottomCenter, bounds.bottomRight,
+      rect.topLeft, rect.topCenter, rect.topRight,
+      rect.centerLeft, rect.centerRight,
+      rect.bottomLeft, rect.bottomCenter, rect.bottomRight,
     ];
   }
 
-  List<Offset> _getWarpGrid(Rect bounds, double sx, double sy) {
+  /// Warp-grid points at their CURRENT transformed positions (edit
+  /// translate + scale), matching the painter's grid rendering.
+  List<Offset> _getWarpGrid() {
+    final pp = context.read<ProjectProvider>();
+    final b = pp.selectionClipBounds;
+    final cx = b.center.dx + pp.editTranslate.dx;
+    final cy = b.center.dy + pp.editTranslate.dy;
+    final hw = b.width / 2 * pp.editScaleX;
+    final hh = b.height / 2 * pp.editScaleY;
     final pts = <Offset>[];
     for (int row = 0; row < 3; row++) {
       for (int col = 0; col < 3; col++) {
-        final t = col / 2;
-        final u = row / 2;
-        pts.add(Offset(
-          bounds.left + t * bounds.width * sx,
-          bounds.top + u * bounds.height * sy,
-        ));
+        pts.add(Offset(cx - hw + col * hw, cy - hh + row * hh));
       }
     }
     return pts;
@@ -925,6 +942,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
 
     if (tp.currentTool == ToolType.move) {
+      // Selection transform box: its control points have top priority —
+      // grabbing one edits the pixel selection, never the drawables.
+      if (pp.selectionPhase == SelectionPhase.editing) {
+        if (!_handleEditHitTest(canvasPos, pp)) {
+          _onStartEditTransform(canvasPos);
+        }
+        return;
+      }
       // Perspective guide: dragging a vanishing-point handle (move tool).
       final handle = _perspectiveHandleAt(canvasPos, tp);
       if (handle != null) {
@@ -1552,9 +1577,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
 
-    // Move tool: drag a perspective vanishing-point handle if grabbed,
-    // else edit the selected drawable (translate/scale/rotate).
+    // Move tool: selection editing > VP handles > drawable editing.
     if (tp.currentTool == ToolType.move) {
+      if (pp.selectionPhase == SelectionPhase.editing) {
+        _onEditMove(canvasPos, pp);
+        return;
+      }
       if (tp.perspectiveGuideEnabled && _tabDragIndex != null) {
         _movePerspectiveHandle(canvasPos);
         return;
@@ -2128,7 +2156,11 @@ class _PaintCanvasState extends State<PaintCanvas> {
                     DateTime.now().difference(_scaleEndTime!) < _scaleCooldown) {
                   return;
                 }
-                if (isMoveTool && !hasSelection) {
+                if (isMoveTool && pp.selectionPhase == SelectionPhase.editing) {
+                  // Dragging the selection transform box / its handles.
+                  _onPointerMove(details.localFocalPoint, areaSize);
+                  setState(() {});
+                } else if (isMoveTool && !hasSelection) {
                   if (tp.perspectiveGuideEnabled && _tabDragIndex != null) {
                     // Dragging a vanishing-point handle, not panning.
                     _onPointerMove(details.localFocalPoint, areaSize);
