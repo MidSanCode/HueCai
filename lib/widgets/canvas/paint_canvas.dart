@@ -101,6 +101,18 @@ class _PaintCanvasState extends State<PaintCanvas> {
   // Curve tool: desktop-hover preview of a mid-segment insertion point.
   Offset? _curveHoverInsert;
 
+  // Move-tool editing of the selected drawable:
+  // 0 = none, 1 = translate, 2..5 = corner scale (text), 6 = rotate (text).
+  int _selDragMode = 0;
+  Offset _selDragLast = Offset.zero;
+  Offset _selPivot = Offset.zero;
+  double _selStartAngle = 0;
+  double _selStartRotation = 0;
+  double _selStartDist = 1;
+  double _selStartFontSize = 0;
+  Offset _selStartAnchor = Offset.zero;
+  bool _selSnapshotTaken = false;
+
   // Symmetry: while enabled, brush/eraser strokes commit a mirrored twin
   // drawable on the same layer, kept in sync during the drag.
   Drawable? _mirrorTwin;
@@ -919,15 +931,126 @@ class _PaintCanvasState extends State<PaintCanvas> {
         _tabDragIndex = handle;
         return;
       }
+      final viewScale = context.read<CanvasProvider>().scale;
+      // Selected text: transform handles (rotate knob / corners) win.
+      final sel = pp.selectedDrawable;
+      if (sel != null && _isTextDrawable(sel)) {
+        final h = _textHandleAt(canvasPos, sel, viewScale);
+        if (h != 0) {
+          _beginTextHandleDrag(h, sel, canvasPos);
+          return;
+        }
+      }
       final hit = _hitTest(canvasPos);
       if (hit != null) {
         pp.selectDrawable(hit);
+        _beginTranslateDrag(canvasPos);
       } else {
         pp.clearSelection();
+        _selDragMode = 0;
       }
       return;
     }
     // Brush/eraser/shape (rect/ellipse) start is deferred to _tryBeginDrag
+  }
+
+  // ─── Move-tool editing of the selected drawable ────────────────
+
+  bool _isTextDrawable(Drawable d) =>
+      d.textData != null && d.textData!.trim().isNotEmpty;
+
+  /// 0 = none, 1 = rotate knob, 2..5 = corners TL/TR/BR/BL.
+  int _textHandleAt(Offset p, Drawable d, double viewScale) {
+    final r = 14.0 / viewScale;
+    if ((p - textRotateHandlePosition(d, viewScale)).distance <= r) return 1;
+    final corners = textCornerPositions(d);
+    for (int i = 0; i < 4; i++) {
+      if ((p - corners[i]).distance <= r) return i + 2;
+    }
+    return 0;
+  }
+
+  void _beginTranslateDrag(Offset p) {
+    _selDragMode = 1;
+    _selDragLast = p;
+    _selSnapshotTaken = false;
+  }
+
+  void _beginTextHandleDrag(int handle, Drawable d, Offset p) {
+    if (handle == 1) {
+      // Rotate around the visual center.
+      _selDragMode = 6;
+      _selPivot = d.textCenter;
+      _selStartRotation = d.rotation;
+      _selStartAngle = atan2(p.dy - _selPivot.dy, p.dx - _selPivot.dx);
+    } else {
+      // Uniform scale from the center; anchor offset scales with it so
+      // the text keeps its center while growing.
+      _selDragMode = handle; // 2..5
+      _selPivot = d.textCenter;
+      _selStartAnchor = d.points.first;
+      _selStartFontSize = d.fontSize;
+      _selStartDist = max(1.0, (p - _selPivot).distance);
+    }
+    _selSnapshotTaken = false;
+  }
+
+  void _onSelectedDragMove(Offset p, ProjectProvider pp) {
+    final sel = pp.selectedDrawable;
+    if (sel == null || _selDragMode == 0) return;
+    if (sel.isLiquify || sel.isSmudge) return;
+    if (!_selSnapshotTaken) {
+      pp.saveSnapshot();
+      _selSnapshotTaken = true;
+    }
+    switch (_selDragMode) {
+      case 1:
+        final delta = p - _selDragLast;
+        if (delta.distance < 0.01) return;
+        _selDragLast = p;
+        _translateDrawable(sel, delta);
+        break;
+      case 6:
+        final angle = atan2(p.dy - _selPivot.dy, p.dx - _selPivot.dx);
+        sel.rotation = _selStartRotation + (angle - _selStartAngle);
+        break;
+      case 2:
+      case 3:
+      case 4:
+      case 5:
+        final dist = (p - _selPivot).distance;
+        final s = (dist / _selStartDist).clamp(0.05, 40.0);
+        sel.fontSize = (_selStartFontSize * s).clamp(4.0, 1000.0);
+        sel.points[0] = _selPivot + (_selStartAnchor - _selPivot) * s;
+        break;
+    }
+    sel.contentVersion++;
+    pp.updateDrawableSilent(sel.id, sel);
+  }
+
+  /// Translates every position-bearing field of [d] by [delta].
+  void _translateDrawable(Drawable d, Offset delta) {
+    for (int i = 0; i < d.points.length; i++) {
+      d.points[i] = d.points[i] + delta;
+    }
+    if (d.curveHandles != null) {
+      for (int i = 0; i < d.curveHandles!.length; i++) {
+        final h = d.curveHandles![i];
+        if (h != null) d.curveHandles![i] = h + delta;
+      }
+    }
+    if (d.fillSpans != null) {
+      final dx = delta.dx.round();
+      final dy = delta.dy.round();
+      if (dx != 0 || dy != 0) {
+        final s = d.fillSpans!;
+        for (int i = 0; i + 3 < s.length; i += 4) {
+          s[i] += dy;
+          s[i + 1] += dx;
+          s[i + 2] += dx;
+        }
+      }
+    }
   }
 
   // ─── Curve tool (multi-click + bézier) ─────────────────────────
@@ -1153,9 +1276,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
   /// the tapped canvas position.
   Future<void> _promptTextAndPlace(
       Offset canvasPos, ProjectProvider pp, ToolProvider tp) async {
-    final result = await showTextInputDialog(context);
+    final result = await showTextInputDialog(
+      context,
+      initialFontFamily: tp.textFontFamily,
+    );
     if (result == null || result.text.trim().isEmpty) return;
     if (!mounted) return;
+    tp.setTextFontFamily(result.fontFamily);
     pp.saveSnapshot();
     final drawable = Drawable(
       id: const Uuid().v4(),
@@ -1164,8 +1291,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
       opacity: 1.0,
       textData: result.text,
       fontSize: result.fontSize,
+      fontFamily: result.fontFamily,
     );
     pp.addDrawable(drawable);
+    pp.selectDrawable(drawable);
     pp.refresh();
   }
 
@@ -1423,12 +1552,14 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
 
-    // Move tool: drag a perspective vanishing-point handle if grabbed.
+    // Move tool: drag a perspective vanishing-point handle if grabbed,
+    // else edit the selected drawable (translate/scale/rotate).
     if (tp.currentTool == ToolType.move) {
       if (tp.perspectiveGuideEnabled && _tabDragIndex != null) {
         _movePerspectiveHandle(canvasPos);
         return;
       }
+      _onSelectedDragMove(canvasPos, pp);
       return;
     }
 
@@ -1979,13 +2110,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
                   DateTime.now().difference(_scaleEndTime!) < _scaleCooldown) {
                 return;
               }
-              // Move tool normally pans, but with the perspective guide on
-              // it must hit-test the vanishing-point handles first.
-              final perspReady =
-                  isMoveTool && tp.perspectiveGuideEnabled && !hasSelection;
-              if (!isMoveTool || hasSelection || perspReady) {
-                _onPointerDown(details.localFocalPoint, areaSize);
-              }
+              // Every tool gets pen-down. The move tool hit-tests selection
+              // handles on down; panning still applies in the update phase
+              // whenever nothing is being dragged.
+              _onPointerDown(details.localFocalPoint, areaSize);
             },
             onScaleUpdate: (details) {
               if (details.pointerCount >= 2) {
@@ -2010,6 +2138,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
                       cp.panBy(delta);
                     }
                   }
+                } else if (isMoveTool && hasSelection) {
+                  // Editing the selected drawable (translate/scale/rotate).
+                  _onPointerMove(details.localFocalPoint, areaSize);
+                  setState(() {});
                 } else if (isDrawingTool) {
                   _onPointerMove(details.localFocalPoint, areaSize);
                   // In-stroke updates bump the content version silently
@@ -2062,6 +2194,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
                               : const [],
                           curveHoverInsert: _curveHoverInsert,
                           curvePlacing: _isPlacingShapePoints,
+                          moveToolActive: isMoveTool,
                           selectionMaskImage: pp.selectionMaskImage,
                           selectionClipImage: pp.selectionClipImage,
                           selectionClipBounds: pp.selectionClipBounds,
@@ -2133,6 +2266,36 @@ int layerContentVersion(Layer layer) => Object.hashAll([
   );
 }
 
+/// Rotates [v] by [angle] radians (clockwise in Flutter's y-down space).
+Offset _rotateVec2(Offset v, double angle) => angle == 0
+    ? v
+    : Offset(
+        v.dx * cos(angle) - v.dy * sin(angle),
+        v.dx * sin(angle) + v.dy * cos(angle),
+      );
+
+/// The four rotated corners of a text drawable's rendered box (TL, TR,
+/// BR, BL). Shared by gesture hit-testing and the painter.
+List<Offset> textCornerPositions(Drawable d) {
+  final sz = d.textSize;
+  final a = d.points.first;
+  final r = d.rotation;
+  return [
+    a + _rotateVec2(Offset.zero, r),
+    a + _rotateVec2(Offset(sz.width, 0), r),
+    a + _rotateVec2(Offset(sz.width, sz.height), r),
+    a + _rotateVec2(Offset(0, sz.height), r),
+  ];
+}
+
+/// Position of the text rotation knob above the top edge.
+Offset textRotateHandlePosition(Drawable d, double viewScale) {
+  final sz = d.textSize;
+  final a = d.points.first;
+  final stem = 26.0 / viewScale;
+  return a + _rotateVec2(Offset(sz.width / 2, -stem), d.rotation);
+}
+
 class _BackgroundPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -2155,6 +2318,7 @@ class _CanvasPainter extends CustomPainter {
   final List<Offset> perspectivePoints;
   final bool curvePlacing;
   final Offset? curveHoverInsert;
+  final bool moveToolActive;
   final ui.Image? selectionMaskImage;
   final ui.Image? selectionClipImage;
   final Rect selectionClipBounds;
@@ -2178,6 +2342,7 @@ class _CanvasPainter extends CustomPainter {
     this.perspectivePoints = const [],
     this.curvePlacing = false,
     this.curveHoverInsert,
+    this.moveToolActive = false,
     this.selectionMaskImage,
     this.selectionClipImage,
     this.selectionClipBounds = Rect.zero,
@@ -2244,7 +2409,13 @@ class _CanvasPainter extends CustomPainter {
       for (final d in layer.drawables) {
         d.draw(canvas, Paint());
         if (d.selected) {
-          _drawSelectionHandles(canvas, d);
+          if (moveToolActive &&
+              d.textData != null &&
+              d.textData!.trim().isNotEmpty) {
+            _drawTextTransformHandles(canvas, d);
+          } else {
+            _drawSelectionHandles(canvas, d);
+          }
         }
       }
     }
@@ -2569,6 +2740,59 @@ class _CanvasPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5);
     }
+  }
+
+  /// PS-style text transform overlay: dashed rotated box, corner scale
+  /// handles and a rotation knob on a stem above the top edge.
+  void _drawTextTransformHandles(Canvas canvas, Drawable d) {
+    final ws = 1.0 / viewScale;
+    final corners = textCornerPositions(d);
+    final blue = const Color(0xFF29B6F6);
+
+    final box = ui.Path()
+      ..addPolygon(corners, true);
+    _drawDashedPath(
+      canvas,
+      box,
+      Paint()
+        ..color = blue
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2 * ws,
+      dashLen: 5 * ws,
+      gapLen: 4 * ws,
+    );
+
+    final handleR = 5.5 * ws;
+    for (final c in corners) {
+      canvas.drawCircle(c, handleR, Paint()..color = Colors.white);
+      canvas.drawCircle(
+        c,
+        handleR,
+        Paint()
+          ..color = blue
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5 * ws,
+      );
+    }
+
+    // Rotation knob on a stem above the top edge midpoint.
+    final knob = textRotateHandlePosition(d, viewScale);
+    final topMid = Offset.lerp(corners[0], corners[1], 0.5)!;
+    canvas.drawLine(
+      topMid, knob,
+      Paint()
+        ..color = blue
+        ..strokeWidth = 1.2 * ws,
+    );
+    canvas.drawCircle(knob, handleR, Paint()..color = Colors.white);
+    canvas.drawCircle(
+      knob,
+      handleR,
+      Paint()
+        ..color = blue
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5 * ws,
+    );
   }
 
   void _drawDashedPath(Canvas canvas, ui.Path path, Paint paint,

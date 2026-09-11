@@ -84,6 +84,9 @@ class Drawable {
   /// segment leaving anchor i). Null entry / null list = corner anchor
   /// (straight segment fallback). Parallel to [points].
   List<Offset?>? curveHandles;
+
+  /// Text tool: resolved font family (system font name). Null = default.
+  String? fontFamily;
   BrushType brushType;
 
   Drawable({
@@ -111,6 +114,7 @@ class Drawable {
     this.fontSize = 24.0,
     this.fillSpans,
     this.curveHandles,
+    this.fontFamily,
     this.brushType = BrushType.hardRound,
   }) : gradientStops = gradientStops ?? [];
 
@@ -126,8 +130,21 @@ class Drawable {
     }
     if (textData != null && textData!.trim().isNotEmpty) {
       final size = _measureText();
-      maxX = max(maxX, points.first.dx + size.width);
-      maxY = max(maxY, points.first.dy + size.height);
+      final a = points.first;
+      // Include all four corners after rotation so hit-testing and
+      // selection handles wrap the visually rendered text.
+      for (final corner in [
+        Offset.zero,
+        Offset(size.width, 0),
+        Offset(size.width, size.height),
+        Offset(0, size.height),
+      ]) {
+        final q = a + _rotateVec(corner, rotation);
+        if (q.dx < minX) minX = q.dx;
+        if (q.dy < minY) minY = q.dy;
+        if (q.dx > maxX) maxX = q.dx;
+        if (q.dy > maxY) maxY = q.dy;
+      }
     }
     if (fillSpans != null) {
       final spans = fillSpans!;
@@ -154,11 +171,30 @@ class Drawable {
     final tp = TextPainter(
       text: TextSpan(
         text: textData,
-        style: TextStyle(fontSize: fontSize, height: 1.2),
+        style: TextStyle(fontSize: fontSize, height: 1.2, fontFamily: fontFamily),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
     return Size(tp.width, tp.height);
+  }
+
+  /// Rendered text extent at the current fontSize/fontFamily (top-left
+  /// anchored layout, pre-rotation).
+  Size get textSize => textData == null ? Size.zero : _measureText();
+
+  /// Rotates [v] by [angle] radians (clockwise in Flutter's y-down space).
+  static Offset _rotateVec(Offset v, double angle) => angle == 0
+      ? v
+      : Offset(
+          v.dx * cos(angle) - v.dy * sin(angle),
+          v.dx * sin(angle) + v.dy * cos(angle),
+        );
+
+  /// Center of the rendered text block in canvas space (accounts for
+  /// rotation about the top-left anchor).
+  Offset get textCenter {
+    final sz = textSize;
+    return points.first + _rotateVec(Offset(sz.width / 2, sz.height / 2), rotation);
   }
 
   void draw(Canvas canvas, Paint paint) {
@@ -348,6 +384,7 @@ class Drawable {
     double? fontSize,
     List<int>? fillSpans,
     List<Offset?>? curveHandles,
+    String? fontFamily,
   }) =>
       Drawable(
         id: id ?? this.id,
@@ -373,6 +410,7 @@ class Drawable {
         fontSize: fontSize ?? this.fontSize,
         fillSpans: fillSpans ?? (this.fillSpans != null ? List.from(this.fillSpans!) : null),
         curveHandles: curveHandles ?? (this.curveHandles != null ? List<Offset?>.from(this.curveHandles!) : null),
+        fontFamily: fontFamily ?? this.fontFamily,
       );
 
   Map<String, dynamic> toJson() => {
@@ -394,6 +432,7 @@ class Drawable {
         'brushType': brushType.name,
         if (textData != null) 'text': textData,
         if (textData != null) 'fontSize': fontSize,
+        if (fontFamily != null) 'fontFamily': fontFamily,
         if (fillSpans != null) 'fillSpans': fillSpans,
         if (curveHandles != null)
           'curveHandles': curveHandles!
@@ -439,6 +478,7 @@ class Drawable {
             : BrushType.hardRound,
         isLiquify: json['isLiquify'] as bool? ?? false,
         textData: json['text'] as String?,
+        fontFamily: json['fontFamily'] as String?,
         fontSize: (json['fontSize'] as num?)?.toDouble() ?? 24.0,
         fillSpans: json['fillSpans'] != null
             ? (json['fillSpans'] as List).map((e) => (e as num).toInt()).toList()
@@ -463,11 +503,24 @@ class Drawable {
           color: color.withValues(alpha: opacity),
           fontSize: fontSize,
           height: 1.2,
+          fontFamily: fontFamily,
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(canvas, points.first);
+    if (rotation == 0) {
+      tp.paint(canvas, points.first);
+      return;
+    }
+    // Rotate around the visual center so the text spins in place.
+    final sz = Size(tp.width, tp.height);
+    final center =
+        points.first + _rotateVec(Offset(sz.width / 2, sz.height / 2), rotation);
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(rotation);
+    tp.paint(canvas, Offset(-sz.width / 2, -sz.height / 2));
+    canvas.restore();
   }
 
   void _drawFillSpans(Canvas canvas) {

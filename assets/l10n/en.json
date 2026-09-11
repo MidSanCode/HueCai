@@ -272,5 +272,6 @@
   "text.title": "Add Text",
   "text.hint": "Type something…",
   "text.size": "Size",
+  "text.font": "Font",
   "text.ok": "OK"
 }

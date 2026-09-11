@@ -33,6 +33,8 @@ class ToolProvider extends ChangeNotifier {
   bool _isStandardMode = false;
   bool _symmetryEnabled = false;
   bool _perspectiveGuideEnabled = false;
+  // Last font chosen in the text dialog; remembered across placements.
+  String _textFontFamily = 'Microsoft YaHei';
   final List<Color> _memoryColors = List.filled(20, Colors.transparent);
 
   ToolType get currentTool => _currentTool;
@@ -48,7 +50,13 @@ class ToolProvider extends ChangeNotifier {
   bool get isStandardMode => _isStandardMode;
   bool get symmetryEnabled => _symmetryEnabled;
   bool get perspectiveGuideEnabled => _perspectiveGuideEnabled;
+  String get textFontFamily => _textFontFamily;
   List<Color> get memoryColors => _memoryColors;
+
+  void setTextFontFamily(String family) {
+    _textFontFamily = family;
+    notifyListeners();
+  }
 
   void addMemoryColor(Color c) {
     _memoryColors.remove(c);
