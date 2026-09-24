@@ -273,5 +273,9 @@
   "text.hint": "Type something…",
   "text.size": "Size",
   "text.font": "Font",
-  "text.ok": "OK"
+  "text.ok": "OK",
+  "cloud.status_synced": "Synced",
+  "cloud.status_failed": "Sync failed",
+  "cloud.status_syncing": "Syncing...",
+  "cloud.status_unsynced": "Not synced"
 }

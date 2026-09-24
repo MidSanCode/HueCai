@@ -11,6 +11,7 @@ import '../providers/cloud_sync_provider.dart';
 import '../models/project.dart';
 import '../widgets/cloud_user_card.dart';
 import '../widgets/cloud_conflict_dialog.dart';
+import '../widgets/cloud_setup_dialog.dart';
 import '../models/canvas_settings.dart';
 import '../models/drawable.dart';
 import '../services/project_service.dart';
@@ -239,25 +240,72 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   Future<void> _syncProject(BuildContext ctx, Project project) async {
     final syncProvider = context.read<CloudSyncProvider>();
+
+    // Cloud sync now requires a provider + credentials. When none are stored
+    // yet, walk the user through the setup dialog instead of failing.
     if (!syncProvider.isLoggedIn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cloud Sync: please log in first.')),
-      );
-      return;
+      final config = await showCloudSetupDialog(ctx);
+      if (config == null) return;
+      if (!syncProvider.isLoggedIn) return;
     }
-    await syncProvider.syncProject(project, (localTime, remoteTime) async {
-      final resolution = await showCloudConflictDialog(
-        ctx,
-        localTime: localTime,
-        remoteTime: remoteTime,
-      );
-      return resolution ?? SyncResolution.local;
-    });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(syncProvider.syncErrorMessage ?? 'Project synced.')),
-      );
+
+    var cancelled = false;
+    final outcome = await syncProvider.syncProject(
+      project,
+      (localTime, remoteTime) async {
+        final resolution = await showCloudConflictDialog(
+          ctx,
+          localTime: localTime,
+          remoteTime: remoteTime,
+          projectName: project.name,
+          localSize: _fileSize(project.filePath),
+        );
+        // `null` means the user dismissed the dialog: abort the sync rather
+        // than defaulting to one side and silently discarding the other.
+        if (resolution == null) {
+          cancelled = true;
+          return SyncResolution.local;
+        }
+        return resolution;
+      },
+    );
+
+    if (!mounted) return;
+
+    if (cancelled && outcome == SyncOutcome.conflictResolved) return;
+
+    final message = switch (outcome) {
+      SyncOutcome.uploaded => 'Cloud sync: "${project.name}" uploaded.',
+      SyncOutcome.downloaded => 'Cloud sync: "${project.name}" updated from cloud.',
+      SyncOutcome.upToDate => 'Cloud sync: "${project.name}" is already up to date.',
+      SyncOutcome.conflictResolved => 'Cloud sync: conflict resolved for '
+          '"${project.name}".',
+      SyncOutcome.failed =>
+        syncProvider.syncErrorMessage ?? 'Cloud sync failed.',
+    };
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: outcome == SyncOutcome.failed
+            ? Theme.of(context).colorScheme.error
+            : null,
+      ),
+    );
+
+    // A download rewrote the project file, so refresh the grid/thumbnails.
+    if (outcome == SyncOutcome.downloaded ||
+        outcome == SyncOutcome.conflictResolved) {
+      syncProvider.markDirty(project.id);
+      await context.read<ProjectProvider>().loadRecentProjects();
     }
+  }
+
+  /// Size of a local project file in bytes, or `null` when unavailable.
+  int? _fileSize(String? path) {
+    if (path == null) return null;
+    final file = File(path);
+    return file.existsSync() ? file.lengthSync() : null;
   }
 
   @override
@@ -726,6 +774,21 @@ class _ProjectCardState extends State<_ProjectCard> {
     return Icon(icon, size: 18, color: color);
   }
 
+  /// Human-readable sync state shown under the project name.
+  String _syncLabel() => switch (widget.syncStatus) {
+        SyncStatus.success => 'cloud.status_synced'.tr(),
+        SyncStatus.error => 'cloud.status_failed'.tr(),
+        SyncStatus.syncing => 'cloud.status_syncing'.tr(),
+        SyncStatus.idle => 'cloud.status_unsynced'.tr(),
+      };
+
+  Color _syncLabelColor(ThemeData theme) => switch (widget.syncStatus) {
+        SyncStatus.success => Colors.green,
+        SyncStatus.error => theme.colorScheme.error,
+        SyncStatus.syncing => Colors.orange,
+        SyncStatus.idle => theme.colorScheme.outline,
+      };
+
   void _showReplay(BuildContext context) async {
     final project = widget.project;
     if (project.filePath == null) return;
@@ -860,6 +923,36 @@ class _ProjectCardState extends State<_ProjectCard> {
                       style: theme.textTheme.bodySmall
                           ?.copyWith(color: theme.colorScheme.outline),
                     ),
+                    // Cloud sync state: 已同步 / 同步失败 / 未同步.
+                    if (widget.onSync != null) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Icon(
+                            switch (widget.syncStatus) {
+                              SyncStatus.success => Icons.cloud_done,
+                              SyncStatus.error => Icons.cloud_off,
+                              SyncStatus.syncing => Icons.cloud_sync,
+                              SyncStatus.idle => Icons.cloud_outlined,
+                            },
+                            size: 12,
+                            color: _syncLabelColor(theme),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              _syncLabel(),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: _syncLabelColor(theme),
+                                fontSize: 11,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

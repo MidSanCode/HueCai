@@ -273,5 +273,9 @@
   "text.hint": "输入文字…",
   "text.size": "字号",
   "text.font": "字体",
-  "text.ok": "确定"
+  "text.ok": "确定",
+  "cloud.status_synced": "已同步",
+  "cloud.status_failed": "同步失败",
+  "cloud.status_syncing": "同步中…",
+  "cloud.status_unsynced": "未同步"
 }
