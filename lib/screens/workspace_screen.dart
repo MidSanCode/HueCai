@@ -7,7 +7,10 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../providers/project_provider.dart';
+import '../providers/cloud_sync_provider.dart';
 import '../models/project.dart';
+import '../widgets/cloud_user_card.dart';
+import '../widgets/cloud_conflict_dialog.dart';
 import '../models/canvas_settings.dart';
 import '../models/drawable.dart';
 import '../services/project_service.dart';
@@ -209,6 +212,10 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       context: ctx,
       position: RelativeRect.fromLTRB(100, 100, 100, 100),
       items: [
+        PopupMenuItem(value: 'sync', child: ListTile(
+          leading: Icon(Icons.cloud_upload_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
+          title: const Text('Sync to Cloud'), dense: true,
+        )),
         PopupMenuItem(value: 'rename', child: ListTile(
           leading: Icon(Icons.edit, size: 18, color: theme.colorScheme.onSurfaceVariant),
           title: Text('workspace.rename'.tr()), dense: true,
@@ -220,11 +227,36 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       ],
     );
     final pp = context.read<ProjectProvider>();
-    if (result == 'rename') {
+    if (result == 'sync') {
+      await _syncProject(ctx, project);
+    } else if (result == 'rename') {
       _showRenameDialog(ctx, project);
     } else if (result == 'delete') {
       await pp.deleteProject(project.filePath!);
       if (context.mounted) pp.loadRecentProjects();
+    }
+  }
+
+  Future<void> _syncProject(BuildContext ctx, Project project) async {
+    final syncProvider = context.read<CloudSyncProvider>();
+    if (!syncProvider.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cloud Sync: please log in first.')),
+      );
+      return;
+    }
+    await syncProvider.syncProject(project, (localTime, remoteTime) async {
+      final resolution = await showCloudConflictDialog(
+        ctx,
+        localTime: localTime,
+        remoteTime: remoteTime,
+      );
+      return resolution ?? SyncResolution.local;
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(syncProvider.syncErrorMessage ?? 'Project synced.')),
+      );
     }
   }
 
@@ -282,7 +314,18 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                 ),
               ],
       ),
-      body: _showTrash ? _buildTrashView(context, theme) : _buildProjectGrid(context, theme, pp),
+      body: _showTrash ? _buildTrashView(context, theme) : _buildWorkspaceBody(context, theme, pp),
+    );
+  }
+
+  Widget _buildWorkspaceBody(BuildContext context, ThemeData theme, ProjectProvider pp) {
+    return Column(
+      children: [
+        const CloudUserCard(),
+        Expanded(
+          child: _buildProjectGrid(context, theme, pp),
+        ),
+      ],
     );
   }
 
@@ -335,6 +378,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Widget _buildProjectGrid(BuildContext context, ThemeData theme, ProjectProvider provider) {
+    final cloudSync = context.watch<CloudSyncProvider>();
     if (provider.loading) return const Center(child: CircularProgressIndicator());
     if (provider.recentProjects.isEmpty) {
       return _EmptyState(
@@ -386,6 +430,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                         project: project,
                         thumbWidth: tileW,
                         revision: _thumbRevision,
+                        syncStatus: cloudSync.statusOf(project.id),
+                        onSync: cloudSync.isLoggedIn ? () => _syncProject(context, project) : null,
                         selected: _selectionMode && project.filePath != null && _selectedPaths.contains(project.filePath),
                         showCheckbox: _selectionMode,
                         onTap: () {
@@ -580,6 +626,10 @@ class _ProjectCard extends StatefulWidget {
   final VoidCallback? onLongPress;
   final VoidCallback? onContextMenu;
 
+  /// Cloud sync status shown as a small icon on the thumbnail.
+  final SyncStatus syncStatus;
+  final VoidCallback? onSync;
+
   /// Approximate card tile width (logical px). Used to cap the decoded
   /// thumbnail resolution so large previews don't consume excessive memory.
   final double thumbWidth;
@@ -597,6 +647,8 @@ class _ProjectCard extends StatefulWidget {
     required this.onTap,
     this.onLongPress,
     this.onContextMenu,
+    this.syncStatus = SyncStatus.idle,
+    this.onSync,
   });
 
   @override
@@ -656,6 +708,22 @@ class _ProjectCardState extends State<_ProjectCard> {
     if (widget.thumbWidth <= 0) return 300;
     final dpr = MediaQuery.devicePixelRatioOf(context);
     return (widget.thumbWidth * dpr).round().clamp(96, 512);
+  }
+
+  Widget _syncIcon(ThemeData theme) {
+    final color = switch (widget.syncStatus) {
+      SyncStatus.success => Colors.greenAccent,
+      SyncStatus.error => theme.colorScheme.error,
+      SyncStatus.syncing => Colors.amber,
+      SyncStatus.idle => Colors.white70,
+    };
+    final icon = switch (widget.syncStatus) {
+      SyncStatus.success => Icons.cloud_done,
+      SyncStatus.error => Icons.cloud_off,
+      SyncStatus.syncing => Icons.cloud_sync,
+      SyncStatus.idle => Icons.cloud_outlined,
+    };
+    return Icon(icon, size: 18, color: color);
   }
 
   void _showReplay(BuildContext context) async {
@@ -731,6 +799,23 @@ class _ProjectCardState extends State<_ProjectCard> {
                           widget.selected ? Icons.check_circle : Icons.circle_outlined,
                           size: 22,
                           color: widget.selected ? theme.colorScheme.primary : Colors.white70,
+                        ),
+                      ),
+                    if (widget.onSync != null)
+                      Positioned(
+                        left: 4,
+                        top: widget.showCheckbox ? 30 : 4,
+                        child: Material(
+                          color: Colors.black38,
+                          borderRadius: BorderRadius.circular(16),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: widget.onSync,
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: _syncIcon(theme),
+                            ),
+                          ),
                         ),
                       ),
                     Positioned(

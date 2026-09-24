@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'providers/project_provider.dart';
 import 'providers/app_settings.dart';
+import 'providers/cloud_sync_provider.dart';
 import 'screens/workspace_screen.dart';
 
 bool get _isDesktop =>
@@ -18,6 +19,7 @@ class HueCaiApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ProjectProvider()),
+        ChangeNotifierProvider(create: (_) => CloudSyncProvider()),
       ],
       child: _AppContent(),
     );
