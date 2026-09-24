@@ -18,6 +18,7 @@ import '../widgets/canvas/paint_canvas.dart';
 import '../widgets/canvas/reference_floating_window.dart';
 import '../widgets/canvas/canvas_zoom_overlay.dart';
 import '../widgets/dialogs/brush_editor_dialog.dart';
+import '../widgets/dialogs/unsaved_changes.dart';
 import '../widgets/selection_panel.dart';
 import 'settings_screen.dart';
 
@@ -64,21 +65,9 @@ class _EditorScreenState extends State<EditorScreen> {
 
   Future<bool> _onWillPop() async {
     final pp = context.read<ProjectProvider>();
-    if (!pp.hasUnsavedChanges) return true;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('unsaved.title'.tr()),
-        content: Text('unsaved.body'.tr()),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop('cancel'), child: Text('unsaved.cancel'.tr())),
-          TextButton(onPressed: () => Navigator.of(ctx).pop('discard'), child: Text('unsaved.discard'.tr())),
-          FilledButton(onPressed: () async { await pp.saveProject(); if (ctx.mounted) Navigator.of(ctx).pop('save'); }, child: Text('unsaved.save'.tr())),
-        ],
-      ),
-    );
-    if (result == 'save') { await pp.saveProject(); return true; }
-    return result == 'discard';
+    final allowed = await mayLeaveWithUnsavedChanges(context);
+    if (allowed) pp.closeProject();
+    return allowed;
   }
 
   @override
@@ -145,37 +134,14 @@ class _EditorScreenState extends State<EditorScreen> {
   /// Shows the unsaved-changes dialog if needed, then returns to workspace.
   Future<void> _confirmExit() async {
     final pp = context.read<ProjectProvider>();
-    if (!pp.hasUnsavedChanges) {
-      pp.closeProject();
-      Navigator.of(context).pop();
-      return;
-    }
-    await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('unsaved.title'.tr()),
-        content: Text('unsaved.body'.tr()),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop('cancel'), child: Text('unsaved.cancel'.tr())),
-          TextButton(
-            onPressed: () {
-              pp.closeProject();
-              Navigator.of(ctx).pop('discard');
-              Navigator.of(context).pop();
-            },
-            child: Text('unsaved.discard'.tr()),
-          ),
-          FilledButton(
-            onPressed: () async {
-              await pp.saveProject();
-              if (ctx.mounted) Navigator.of(ctx).pop('save');
-              if (mounted) Navigator.of(context).pop();
-            },
-            child: Text('unsaved.save'.tr()),
-          ),
-        ],
-      ),
-    );
+    // Await the user's decision first, then navigate exactly once. The old
+    // version popped from inside the dialog's button callbacks, which both
+    // ignored the future result and popped twice on some paths.
+    final allowed = await mayLeaveWithUnsavedChanges(context);
+    if (!allowed) return;
+    if (!mounted) return;
+    pp.closeProject();
+    Navigator.of(context).pop();
   }
 
   void _showTopMenu(BuildContext context) {
@@ -236,11 +202,18 @@ class _EditorScreenState extends State<EditorScreen> {
           dense: true, contentPadding: EdgeInsets.zero,
         )),
       ],
-    ).then((value) {
+    ).then((value) async {
       if (value == null) return;
       switch (value) {
         case 'new':
-          Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const EditorScreen()), (_) => false);
+          // Guard unsaved work, then return to the workspace so the user can
+          // create the new project there. Previously this pushed a fresh
+          // EditorScreen with pushAndRemoveUntil, which silently threw away
+          // the current project without ever prompting.
+          if (!await mayLeaveWithUnsavedChanges(context)) return;
+          if (!context.mounted) return;
+          context.read<ProjectProvider>().closeProject();
+          Navigator.of(context).pop();
         case 'save': context.read<ProjectProvider>().saveProject();
         case 'export': _showExportDialog(context);
       }

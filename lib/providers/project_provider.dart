@@ -154,6 +154,14 @@ class ProjectProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Test-only: flags the current project as having unsaved edits, so widget
+  /// tests can exercise the unsaved-changes guard without painting strokes.
+  @visibleForTesting
+  void debugMarkUnsavedForTest() {
+    _hasUnsavedChanges = true;
+    notifyListeners();
+  }
+
   void saveSnapshot() {
     if (_currentProject == null) return;
     _historyService.pushEntry(HistoryEntry(
@@ -418,7 +426,6 @@ class ProjectProvider extends ChangeNotifier {
       final img = frame.image;
       final w = img.width;
       final h = img.height;
-      img.dispose();
 
       final name = file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
       _currentProject = await _projectService.createProject(
@@ -426,18 +433,24 @@ class ProjectProvider extends ChangeNotifier {
         width: w,
         height: h,
       );
-      // Rasterize imported image onto the first layer
-      final layer = _currentProject!.layers.first;
-      final drawable = Drawable(
+
+      // Rasterize the imported picture onto its own layer.
+      //
+      // This used to add a transparent placeholder rectangle to the first
+      // layer (which is the locked white background), so the imported image
+      // was never actually drawn and the canvas came up blank. The decoded
+      // bitmap is held on the layer via `image`, which the painter, the
+      // thumbnail generator and the .hcp writer all already understand.
+      final layer = Layer(
         id: _uuid.v4(),
-        isShape: true,
-        shapeType: ShapeType.rect,
-        points: [Offset.zero, Offset(w.toDouble(), h.toDouble())],
-        color: Colors.transparent,
-        isFilled: true,
-        strokeWidth: 0,
+        name: name,
+        image: img,
+        imagePath: path,
+        imageOffset: Offset.zero,
       );
-      layer.drawables.add(drawable);
+      _currentProject!.layers.add(layer);
+      _currentProject!.currentLayerIndex = _currentProject!.layers.length - 1;
+
       _hasUnsavedChanges = true;
       _historyService.clear();
       notifyListeners();

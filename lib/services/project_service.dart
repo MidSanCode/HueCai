@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -227,6 +227,34 @@ class ProjectService {
         }
       }
 
+      // Re-attach each layer's rasterized pixels. Without this every layer
+      // comes back empty: imported images (which live only as `layer.image`)
+      // would vanish on reload even though their bytes are in the archive.
+      for (int i = 0; i < project.layers.length; i++) {
+        final entry = archive.files.firstWhere(
+          (f) => f.name == 'layers/layer_$i.png',
+          orElse: () => ArchiveFile('layers/layer_$i.png', 0, <int>[]),
+        );
+        final content = entry.content;
+        if (content.isEmpty) continue;
+        try {
+          final codec = await ui.instantiateImageCodec(
+            Uint8List.fromList(content),
+          );
+          final frame = await codec.getNextFrame();
+          project.layers[i].image = frame.image;
+          // Restored pixels are already baked at the canvas origin, so reset
+          // the placement transform to avoid applying it twice.
+          project.layers[i].imageOffset = Offset.zero;
+          project.layers[i].imageRotation = 0;
+          project.layers[i].imageScale = 1.0;
+          project.layers[i].imageFlipH = false;
+          project.layers[i].imageFlipV = false;
+        } catch (_) {
+          // A layer that fails to decode simply stays vector-only.
+        }
+      }
+
       return project;
     } catch (e) {
       return null;
@@ -372,19 +400,44 @@ class ProjectService {
     try {
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, canvasW.toDouble(), canvasH.toDouble()));
-      canvas.drawRect(
-        Rect.fromLTWH(0, 0, canvasW.toDouble(), canvasH.toDouble()),
-        Paint()..color = Colors.white,
-      );
-      for (final d in layer.drawables) {
-        d.draw(canvas, Paint());
-      }
+      // Start transparent: a layer's own PNG must not bake in an opaque white
+      // backdrop, otherwise stacking layers would hide everything beneath and
+      // the document background could never show through.
+      _drawLayerContent(canvas, layer);
       final picture = recorder.endRecording();
       final img = await picture.toImage(canvasW, canvasH);
       final pngBytes = await img.toByteData(format: ui.ImageByteFormat.png);
       return pngBytes?.buffer.asUint8List();
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Paints one layer's bitmap (if any) plus its drawables onto [canvas].
+  ///
+  /// Shared by layer export and import so a layer carrying a decoded image
+  /// serializes exactly as it renders on screen.
+  void _drawLayerContent(Canvas canvas, Layer layer) {
+    final img = layer.image;
+    if (img != null) {
+      canvas.save();
+      canvas.translate(layer.imageOffset.dx + img.width / 2,
+          layer.imageOffset.dy + img.height / 2);
+      canvas.rotate(layer.imageRotation);
+      final flipX = layer.imageFlipH ? -1.0 : 1.0;
+      final flipY = layer.imageFlipV ? -1.0 : 1.0;
+      canvas.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+      canvas.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(),
+            img.height.toDouble()),
+        Paint(),
+      );
+      canvas.restore();
+    }
+    for (final d in layer.drawables) {
+      d.draw(canvas, Paint());
     }
   }
 

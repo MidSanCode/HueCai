@@ -8,9 +8,9 @@ import '../providers/project_provider.dart';
 import '../providers/app_settings.dart';
 import '../models/drawable.dart';
 import '../screens/settings_screen.dart';
-import '../screens/workspace_screen.dart';
 import '../screens/editor_screen.dart';
 import 'dialogs/brush_editor_dialog.dart';
+import 'dialogs/unsaved_changes.dart';
 
 class EditorMenuBar extends StatelessWidget {
   final bool compact;
@@ -39,10 +39,7 @@ class _FullMenuBar extends StatelessWidget {
         children: [
           _MenuButton(label: 'menu.file'.tr(), children: [
             _MenuItem('menu.file.new'.tr(), Icons.add, () {
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const WorkspaceScreen()),
-                (_) => false,
-              );
+              _returnToWorkspace(context);
             }),
             _MenuItem('menu.file.open'.tr(), Icons.folder_open, () {
               _openHcpFile(context);
@@ -241,10 +238,7 @@ class _CompactMenuBar extends StatelessWidget {
       child: Row(
         children: [
           _CompactBtn(Icons.add, 'menu.file.new'.tr(), () {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const WorkspaceScreen()),
-              (_) => false,
-            );
+            _returnToWorkspace(context);
           }),
           _CompactBtn(Icons.save, 'menu.file.save'.tr(), () {
             context.read<ProjectProvider>().saveProject();
@@ -621,22 +615,57 @@ void _importReference(BuildContext context) async {
   }
 }
 
+/// Leaves the editor and goes back to the workspace, first giving the user a
+/// chance to save unsaved work.
+///
+/// The editor is always pushed on top of the workspace, so popping returns to
+/// the existing screen. This used to `pushAndRemoveUntil(... (_) => false)`,
+/// which tore the whole stack down and pushed a *second* WorkspaceScreen —
+/// discarding the current project without ever prompting.
+Future<void> _returnToWorkspace(BuildContext context) async {
+  if (!await mayLeaveWithUnsavedChanges(context)) return;
+  if (!context.mounted) return;
+  context.read<ProjectProvider>().closeProject();
+  Navigator.of(context).popUntil((route) => route.isFirst);
+}
+
 void _openHcpFile(BuildContext context) async {
   final pp = context.read<ProjectProvider>();
+  // Ask about the current project *before* the picker, so cancelling the
+  // dialog does not leave the picking flow half-done.
+  if (!await mayLeaveWithUnsavedChanges(context)) return;
+  if (!context.mounted) return;
+
   final result = await FilePicker.platform.pickFiles(
     type: FileType.custom,
     allowedExtensions: ['hcp'],
   );
-  if (result != null && result.files.single.path != null) {
-    await pp.openProject(result.files.single.path!);
-    if (context.mounted) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const EditorScreen()),
-        (_) => false,
-      );
-    }
+  if (result == null || result.files.single.path == null) return;
+
+  await pp.openProject(result.files.single.path!);
+  if (!context.mounted) return;
+  // Mark the outgoing editor as already reconciled so its PopScope does not
+  // prompt a second time for the project we just replaced.
+  _leaveEditorForNewContent(context);
+}
+
+/// Replaces the current editor with a fresh one for newly opened content.
+///
+/// The old editor is popped without a second unsaved-changes prompt: the
+/// caller has already resolved that, and the provider now holds the new
+/// project.
+void _leaveEditorForNewContent(BuildContext context, {bool push = true}) {
+  final nav = Navigator.of(context);
+  if (nav.canPop() && !_isWorkspaceRoot(nav)) {
+    nav.pop();
+  }
+  if (push) {
+    nav.push(MaterialPageRoute(builder: (_) => const EditorScreen()));
   }
 }
+
+/// Whether the current route is the root workspace screen.
+bool _isWorkspaceRoot(NavigatorState nav) => !nav.canPop();
 
 void _importImageToCanvas(BuildContext context) async {
   final pp = context.read<ProjectProvider>();
@@ -650,18 +679,20 @@ void _importImageToCanvas(BuildContext context) async {
 
 void _importImageFile(BuildContext context) async {
   final pp = context.read<ProjectProvider>();
+  // importImage() replaces the current project, so guard unsaved work first.
+  if (!await mayLeaveWithUnsavedChanges(context)) return;
+  if (!context.mounted) return;
+
   final result = await FilePicker.platform.pickFiles(
     type: FileType.image,
   );
-  if (result != null && result.files.single.path != null) {
-    final path = result.files.single.path!;
-    await pp.importImage(path);
-    if (context.mounted) {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const EditorScreen()),
-      );
-    }
-  }
+  if (result == null || result.files.single.path == null) return;
+
+  final path = result.files.single.path!;
+  await pp.importImage(path);
+  if (!context.mounted) return;
+  if (pp.currentProject == null) return;
+  _leaveEditorForNewContent(context);
 }
 
 class _MenuDivider extends _BaseMenuItem {
