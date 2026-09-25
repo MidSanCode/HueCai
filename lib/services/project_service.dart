@@ -372,6 +372,15 @@ class ProjectService {
       }
       void renderLayer(Layer layer) {
         if (!layer.visible) return;
+        // Adjustment layers are skipped in thumbnails (approximation).
+        if (layer.adjustment != null) return;
+        // Clone layers render the source layer's content.
+        final content = layer.cloneOfId == null
+            ? layer
+            : project.layers
+                    .where((l) => l.id == layer.cloneOfId)
+                    .firstOrNull ??
+                layer;
         // Isolate each layer so its blend mode applies only to its own
         // pixels when composited back.
         canvas.saveLayer(
@@ -380,17 +389,17 @@ class ProjectService {
             ..color = Colors.white.withValues(alpha: layer.opacity)
             ..blendMode = layer.blendMode.toFlutterBlendMode(),
         );
-        for (final d in layer.drawables) {
+        for (final d in content.drawables) {
           d.draw(canvas, Paint());
         }
-        if (layer.image != null) {
-          final img = layer.image!;
+        if (content.image != null) {
+          final img = content.image!;
           canvas.save();
-          canvas.translate(layer.imageOffset.dx + img.width / 2, layer.imageOffset.dy + img.height / 2);
-          canvas.rotate(layer.imageRotation);
-          final flipX = layer.imageFlipH ? -1.0 : 1.0;
-          final flipY = layer.imageFlipV ? -1.0 : 1.0;
-          canvas.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+          canvas.translate(content.imageOffset.dx + img.width / 2, content.imageOffset.dy + img.height / 2);
+          canvas.rotate(content.imageRotation);
+          final flipX = content.imageFlipH ? -1.0 : 1.0;
+          final flipY = content.imageFlipV ? -1.0 : 1.0;
+          canvas.scale(content.imageScale * flipX, content.imageScale * flipY);
           canvas.drawImageRect(
             img,
             Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),

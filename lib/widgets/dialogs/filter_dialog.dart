@@ -9,45 +9,33 @@ import '../common/curve_editor.dart';
 /// The five built-in filters.
 enum FilterKind { gaussianBlur, unsharpMask, levels, curves, hueSaturation }
 
+String _kindName(FilterKind kind) => switch (kind) {
+      FilterKind.gaussianBlur => 'gaussianBlur',
+      FilterKind.unsharpMask => 'unsharpMask',
+      FilterKind.levels => 'levels',
+      FilterKind.curves => 'curves',
+      FilterKind.hueSaturation => 'hueSaturation',
+    };
+
+/// Picks filter parameters without applying them (adjustment layers).
+Future<AdjustmentSpec?> pickFilterSpec(BuildContext context, FilterKind kind) async {
+  final params = await showDialog<Map<String, dynamic>>(
+    context: context,
+    builder: (_) => _FilterDialog(kind: kind),
+  );
+  if (params == null) return null;
+  return AdjustmentSpec(_kindName(kind), params);
+}
+
 /// Opens the parameter dialog for [kind] and applies the filter to the
 /// current layer on confirm.
 Future<void> showFilterDialog(BuildContext context, FilterKind kind) async {
   final pp = context.read<ProjectProvider>();
   final index = pp.currentProject?.currentLayerIndex;
   if (index == null) return;
-  final params = await showDialog<Map<String, dynamic>>(
-    context: context,
-    builder: (_) => _FilterDialog(kind: kind),
-  );
-  if (params == null) return;
-
-  RgbaImage Function(RgbaImage) filter = switch (kind) {
-    FilterKind.gaussianBlur =>
-      (img) => ImageFilters.gaussianBlur(img, params['radius'] as double),
-    FilterKind.unsharpMask => (img) => ImageFilters.unsharpMask(
-          img,
-          params['radius'] as double,
-          params['amount'] as double,
-          threshold: params['threshold'] as int,
-        ),
-    FilterKind.levels => (img) => ImageFilters.levels(
-          img,
-          inBlack: params['in_black'] as int,
-          inWhite: params['in_white'] as int,
-          gamma: params['gamma'] as double,
-        ),
-    FilterKind.curves => (img) => ImageFilters.curves(
-          img,
-          params['points'] as List<({double x, double y})>,
-        ),
-    FilterKind.hueSaturation => (img) => ImageFilters.hueSaturation(
-          img,
-          hueShift: params['hue'] as double,
-          saturationScale: params['saturation'] as double,
-          lightnessScale: params['lightness'] as double,
-        ),
-  };
-  await pp.applyFilterToLayer(index, filter);
+  final spec = await pickFilterSpec(context, kind);
+  if (spec == null) return;
+  await pp.applyFilterToLayer(index, (img) => spec.apply(img));
 }
 
 class _FilterDialog extends StatefulWidget {

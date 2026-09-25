@@ -13,6 +13,7 @@ import '../models/layer.dart';
 import '../models/mask_stroke.dart';
 import '../models/project.dart';
 import 'history_service.dart';
+import 'image_filters.dart';
 
 /// Reader/writer for the **LGDF** (Layered Generic Data Format) container,
 /// following `temp/example/lgdf-standard.md` v2.0.
@@ -212,6 +213,8 @@ class LgdfCodec {
         'group_id': layer.groupId,
         'mask_enabled': layer.maskEnabled,
         'mask_strokes': layer.maskStrokes?.map((s) => s.toJson()).toList(),
+        'clone_of_id': layer.cloneOfId,
+        'adjustment': layer.adjustment?.toJson(),
         'image_path': layer.imagePath,
         'image_offset': {'x': layer.imageOffset.dx, 'y': layer.imageOffset.dy},
         'image_rotation': layer.imageRotation,
@@ -236,6 +239,11 @@ class LgdfCodec {
       maskStrokes: (json['mask_strokes'] as List?)
           ?.map((s) => MaskStroke.fromJson(s as Map<String, dynamic>))
           .toList(),
+      cloneOfId: json['clone_of_id'] as String?,
+      adjustment: json['adjustment'] != null
+          ? AdjustmentSpec.fromJson(
+              (json['adjustment'] as Map).cast<String, dynamic>())
+          : null,
       imagePath: json['image_path'] as String?,
       imageOffset: offset == null
           ? Offset.zero

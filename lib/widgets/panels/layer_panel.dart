@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../providers/project_provider.dart';
 import '../../models/layer.dart';
 import '../../models/project.dart';
+import '../dialogs/filter_dialog.dart';
 
 Widget _buildLayerItem(
   BuildContext ctx,
@@ -251,6 +252,10 @@ class _LayerItemState extends State<_LayerItem> {
                       ),
                     if (widget.layer.locked)
                       Icon(Icons.lock, size: 12, color: theme.colorScheme.onSurfaceVariant),
+                    if (widget.layer.cloneOfId != null)
+                      Icon(Icons.content_copy, size: 12, color: theme.colorScheme.onSurfaceVariant),
+                    if (widget.layer.adjustment != null)
+                      Icon(Icons.auto_fix_high, size: 12, color: theme.colorScheme.onSurfaceVariant),
                   ],
                 ),
                 // Quick actions for the current non-background layer:
@@ -437,6 +442,23 @@ class _LayerItemState extends State<_LayerItem> {
             title: Text('layer.leave_group'.tr()),
             dense: true,
           )),
+        if (widget.layer.cloneOfId == null && widget.layer.adjustment == null)
+          PopupMenuItem(value: 'clone', child: ListTile(
+            leading: const Icon(Icons.content_copy, size: 18),
+            title: Text('layer.clone'.tr()),
+            dense: true,
+          )),
+        PopupMenuItem(value: 'add_adjustment', child: ListTile(
+          leading: const Icon(Icons.auto_fix_high, size: 18),
+          title: Text('layer.add_adjustment'.tr()),
+          dense: true,
+        )),
+        if (widget.layer.adjustment != null)
+          PopupMenuItem(value: 'edit_adjustment', child: ListTile(
+            leading: const Icon(Icons.tune, size: 18),
+            title: Text('layer.edit_adjustment'.tr()),
+            dense: true,
+          )),
         PopupMenuItem(value: 'blend', child: StatefulBuilder(
           builder: (ctx, setState) => Column(
             mainAxisSize: MainAxisSize.min,
@@ -486,9 +508,66 @@ class _LayerItemState extends State<_LayerItem> {
         case 'leave_group':
           context.read<ProjectProvider>()
               .moveLayerToGroup(widget.index, null);
+        case 'clone':
+          context.read<ProjectProvider>().addCloneLayer(widget.index);
+        case 'add_adjustment':
+          _addAdjustmentLayer(context);
+        case 'edit_adjustment':
+          _editAdjustmentLayer(context);
       }
     });
   }
+
+  /// Picks a filter kind, opens its parameter dialog, then creates the
+  /// adjustment layer above this one.
+  Future<void> _addAdjustmentLayer(BuildContext context) async {
+    final pp = context.read<ProjectProvider>();
+    final kind = await showDialog<FilterKind>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('layer.add_adjustment'.tr()),
+        children: [
+          for (final k in FilterKind.values)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(ctx).pop(k),
+              child: Text(switch (k) {
+                FilterKind.gaussianBlur => 'filter.gaussian_blur'.tr(),
+                FilterKind.unsharpMask => 'filter.unsharp_mask'.tr(),
+                FilterKind.levels => 'filter.levels'.tr(),
+                FilterKind.curves => 'filter.curves'.tr(),
+                FilterKind.hueSaturation => 'filter.hue_saturation'.tr(),
+              }),
+            ),
+        ],
+      ),
+    );
+    if (kind == null || !context.mounted) return;
+    final spec = await pickFilterSpec(context, kind);
+    if (spec == null) return;
+    pp.addAdjustmentLayer(widget.index, spec);
+  }
+
+  /// Reopens the parameter dialog for an existing adjustment layer.
+  Future<void> _editAdjustmentLayer(BuildContext context) async {
+    final pp = context.read<ProjectProvider>();
+    final current = widget.layer.adjustment;
+    if (current == null) return;
+    final kind = FilterKind.values.firstWhere(
+      (k) => _kindNameOf(k) == current.kind,
+      orElse: () => FilterKind.gaussianBlur,
+    );
+    final spec = await pickFilterSpec(context, kind);
+    if (spec == null) return;
+    pp.updateAdjustmentLayer(widget.index, spec);
+  }
+
+  static String _kindNameOf(FilterKind kind) => switch (kind) {
+        FilterKind.gaussianBlur => 'gaussianBlur',
+        FilterKind.unsharpMask => 'unsharpMask',
+        FilterKind.levels => 'levels',
+        FilterKind.curves => 'curves',
+        FilterKind.hueSaturation => 'hueSaturation',
+      };
 
   void _showBlendModeMenu(BuildContext context) {
     final pp = context.read<ProjectProvider>();

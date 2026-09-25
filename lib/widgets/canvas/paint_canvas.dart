@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -14,6 +15,7 @@ import '../../providers/project_provider.dart';
 import '../../providers/app_settings.dart';
 import '../../services/stroke_stabilizer.dart';
 import '../../services/assist_ruler.dart';
+import '../../services/image_filters.dart';
 import '../../utils/logger.dart';
 import '../dialogs/text_input_dialog.dart';
 
@@ -133,7 +135,129 @@ class _PaintCanvasState extends State<PaintCanvas> {
   final Map<String, _LayerRasterEntry> _layerRasters = {};
   final Set<String> _rasterBusy = {};
 
-  int _layerSignature(Layer layer) => layerContentVersion(layer);
+  // Adjustment-layer results: filtered composite of everything below,
+  // keyed by layer id, rebuilt when the below-stack content or the filter
+  // parameters change.
+  final Map<String, ui.Image> _adjustmentImages = {};
+  final Map<String, int> _adjustmentKeys = {};
+  final Set<String> _adjustmentBusy = {};
+
+  /// Content version of the effective render source (clone → source layer).
+  int _layerSignature(Layer layer) {
+    final content = layer.cloneOfId == null
+        ? layer
+        : widget.project.layers
+                .where((l) => l.id == layer.cloneOfId)
+                .firstOrNull ??
+            layer;
+    return layerContentVersion(content);
+  }
+
+  int _adjustmentKey(int layerIndex) {
+    final project = widget.project;
+    final layer = project.layers[layerIndex];
+    final spec = layer.adjustment!;
+    return Object.hashAll([
+      spec.kind,
+      spec.params.toString(),
+      for (var i = 0; i < layerIndex; i++)
+        project.layers[i].visible ? _layerSignature(project.layers[i]) : 0,
+    ]);
+  }
+
+  void _updateAdjustmentCaches() {
+    final project = widget.project;
+    final alive = <String>{};
+    for (var i = 0; i < project.layers.length; i++) {
+      final layer = project.layers[i];
+      if (layer.adjustment == null) continue;
+      if (!layer.visible) continue;
+      alive.add(layer.id);
+      final key = _adjustmentKey(i);
+      if (_adjustmentKeys[layer.id] == key) continue;
+      if (_adjustmentBusy.contains(layer.id)) continue;
+      _adjustmentBusy.add(layer.id);
+      _rebuildAdjustment(layer, i, key);
+    }
+    _adjustmentImages.removeWhere((id, img) {
+      if (alive.contains(id)) return false;
+      img.dispose();
+      _adjustmentKeys.remove(id);
+      return true;
+    });
+  }
+
+  Future<void> _rebuildAdjustment(Layer layer, int index, int key) async {
+    try {
+      final project = widget.project;
+      final w = project.settings.width.toInt();
+      final h = project.settings.height.toInt();
+      if (w <= 0 || h <= 0) return;
+      // Composite every visible layer below the adjustment layer.
+      final recorder = ui.PictureRecorder();
+      final c = Canvas(
+          recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+      for (var i = 0; i < index; i++) {
+        final below = project.layers[i];
+        if (!below.visible || below.adjustment != null) continue;
+        final content = below.cloneOfId == null
+            ? below
+            : project.layers
+                    .where((l) => l.id == below.cloneOfId)
+                    .firstOrNull ??
+                below;
+        c.saveLayer(
+          Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+          Paint()
+            ..color = Colors.white.withValues(alpha: below.opacity)
+            ..blendMode = below.blendMode.toFlutterBlendMode(),
+        );
+        if (content.image != null) {
+          final img = content.image!;
+          c.save();
+          c.translate(content.imageOffset.dx + img.width / 2,
+              content.imageOffset.dy + img.height / 2);
+          c.rotate(content.imageRotation);
+          c.scale(
+              content.imageScale * (content.imageFlipH ? -1.0 : 1.0),
+              content.imageScale * (content.imageFlipV ? -1.0 : 1.0));
+          c.drawImageRect(
+            img,
+            Rect.fromLTWH(
+                0, 0, img.width.toDouble(), img.height.toDouble()),
+            Rect.fromLTWH(-img.width / 2, -img.height / 2,
+                img.width.toDouble(), img.height.toDouble()),
+            Paint(),
+          );
+          c.restore();
+        }
+        for (final d in content.drawables) {
+          d.draw(c, Paint());
+        }
+        c.restore();
+      }
+      final composite = await recorder.endRecording().toImage(w, h);
+      final data =
+          await composite.toByteData(format: ui.ImageByteFormat.rawRgba);
+      composite.dispose();
+      if (data == null) return;
+      final filtered = layer.adjustment!
+          .apply(RgbaImage(w, h, data.buffer.asUint8List()));
+      final completer = Completer<ui.Image>();
+      ui.decodeImageFromPixels(filtered.pixels, w, h,
+          ui.PixelFormat.rgba8888, completer.complete);
+      final img = await completer.future;
+      final old = _adjustmentImages[layer.id];
+      if (old != null && !identical(old, img)) old.dispose();
+      _adjustmentImages[layer.id] = img;
+      _adjustmentKeys[layer.id] = key;
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Best-effort; the unfiltered stack stays visible meanwhile.
+    } finally {
+      _adjustmentBusy.remove(layer.id);
+    }
+  }
 
   void _updateLayerRasters() {
     final project = widget.project;
@@ -141,6 +265,8 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _layerRasters.removeWhere((id, _) => !project.layers.any((l) => l.id == id));
     for (final layer in project.layers) {
       if (!layer.visible) continue;
+      // Adjustment layers carry no content; clones share the source's raster.
+      if (layer.adjustment != null || layer.cloneOfId != null) continue;
       // Small layers render fast vectorially — don't pay texture memory.
       if (layer.drawables.length < 10 && layer.image == null) continue;
       final version = _layerSignature(layer);
@@ -2175,6 +2301,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     // Fire-and-forget: refresh per-layer raster caches for any layer whose
     // content changed since its last rasterization.
     _updateLayerRasters();
+    _updateAdjustmentCaches();
     final isMoveTool = tp.currentTool == ToolType.move;
     final hasSelection = pp.selectedDrawable != null;
     final isDrawingTool = tp.currentTool == ToolType.brush ||
@@ -2343,6 +2470,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
                               ? _perspectiveViewPoints()
                               : const [],
                           rulers: tp.rulers,
+                          adjustmentImages: _adjustmentImages,
                           curveHoverInsert: _curveHoverInsert,
                           curvePlacing: _isPlacingShapePoints,
                           moveToolActive: isMoveTool,
@@ -2384,6 +2512,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
       entry.image.dispose();
     }
     _layerRasters.clear();
+    for (final img in _adjustmentImages.values) {
+      img.dispose();
+    }
+    _adjustmentImages.clear();
     super.dispose();
   }
 }
@@ -2470,6 +2602,7 @@ class _CanvasPainter extends CustomPainter {
   final bool perspectiveEnabled;
   final List<Offset> perspectivePoints;
   final List<AssistRuler> rulers;
+  final Map<String, ui.Image> adjustmentImages;
   final bool curvePlacing;
   final Offset? curveHoverInsert;
   final bool moveToolActive;
@@ -2495,6 +2628,7 @@ class _CanvasPainter extends CustomPainter {
     this.perspectiveEnabled = false,
     this.perspectivePoints = const [],
     this.rulers = const [],
+    this.adjustmentImages = const {},
     this.curvePlacing = false,
     this.curveHoverInsert,
     this.moveToolActive = false,
@@ -2533,14 +2667,40 @@ class _CanvasPainter extends CustomPainter {
 
     void renderLayer(Layer layer) {
       if (!layer.visible) return;
+      // Adjustment layer: paint the cached filtered composite of everything
+      // below over the stack. While the filter cache is being rebuilt, the
+      // unfiltered content below simply stays visible.
+      if (layer.adjustment != null) {
+        final img = adjustmentImages[layer.id];
+        if (img != null) {
+          canvas.drawImageRect(
+            img,
+            Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+            docRect,
+            Paint()
+              ..color = Colors.white.withValues(alpha: layer.opacity)
+              ..blendMode = layer.blendMode.toFlutterBlendMode(),
+          );
+        }
+        return;
+      }
+      // Clone layer: render the source layer's content with this layer's
+      // own opacity/blend/mask. Unknown source ids degrade to empty.
+      final content = layer.cloneOfId == null
+          ? layer
+          : project.layers
+                  .where((l) => l.id == layer.cloneOfId)
+                  .firstOrNull ??
+              null;
+      if (content == null) return;
       final drawingHere = currentDrawable != null &&
-          layer.drawables.contains(currentDrawable);
-      final entry = layerRasters[layer.id];
+          content.drawables.contains(currentDrawable);
+      final entry = layerRasters[content.id];
       final mask = (layer.maskEnabled && layer.maskStrokes != null &&
               layer.maskStrokes!.isNotEmpty)
           ? layer.maskStrokes
           : null;
-      if (entry != null && !drawingHere && entry.version == layerContentVersion(layer)) {
+      if (entry != null && !drawingHere && entry.version == layerContentVersion(content)) {
         // Fast path: blit the cached layer texture with its blend mode.
         void blit() => canvas.drawImage(entry.image, Offset.zero,
             Paint()
@@ -2568,14 +2728,14 @@ class _CanvasPainter extends CustomPainter {
         ..color = Colors.white.withValues(alpha: layer.opacity)
         ..blendMode = layer.blendMode.toFlutterBlendMode();
       canvas.saveLayer(docRect, blendPaint);
-      if (layer.image != null) {
-        final img = layer.image!;
+      if (content.image != null) {
+        final img = content.image!;
         canvas.save();
-        canvas.translate(layer.imageOffset.dx + img.width / 2, layer.imageOffset.dy + img.height / 2);
-        canvas.rotate(layer.imageRotation);
-        final flipX = layer.imageFlipH ? -1.0 : 1.0;
-        final flipY = layer.imageFlipV ? -1.0 : 1.0;
-        canvas.scale(layer.imageScale * flipX, layer.imageScale * flipY);
+        canvas.translate(content.imageOffset.dx + img.width / 2, content.imageOffset.dy + img.height / 2);
+        canvas.rotate(content.imageRotation);
+        final flipX = content.imageFlipH ? -1.0 : 1.0;
+        final flipY = content.imageFlipV ? -1.0 : 1.0;
+        canvas.scale(content.imageScale * flipX, content.imageScale * flipY);
         canvas.drawImageRect(
           img,
           Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
@@ -2584,7 +2744,7 @@ class _CanvasPainter extends CustomPainter {
         );
         canvas.restore();
       }
-      for (final d in layer.drawables) {
+      for (final d in content.drawables) {
         d.draw(canvas, Paint());
       }
       // Apply the transparency mask inside the isolated layer: dstIn keeps
@@ -2598,7 +2758,7 @@ class _CanvasPainter extends CustomPainter {
         canvas.restore();
       }
       canvas.restore();
-      for (final d in layer.drawables) {
+      for (final d in content.drawables) {
         if (d.selected) {
           if (moveToolActive &&
               d.textData != null &&

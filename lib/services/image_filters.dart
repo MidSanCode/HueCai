@@ -19,6 +19,63 @@ class RgbaImage {
   RgbaImage copy() => RgbaImage(width, height, Uint8List.fromList(pixels));
 }
 
+/// A serializable filter description for adjustment layers: the filter kind
+/// plus its parameters, applicable to any raster via [apply].
+class AdjustmentSpec {
+  final String kind; // gaussianBlur | unsharpMask | levels | curves | hueSaturation
+  final Map<String, dynamic> params;
+
+  const AdjustmentSpec(this.kind, this.params);
+
+  static const kinds = [
+    'gaussianBlur',
+    'unsharpMask',
+    'levels',
+    'curves',
+    'hueSaturation',
+  ];
+
+  RgbaImage apply(RgbaImage src) => switch (kind) {
+        'gaussianBlur' => ImageFilters.gaussianBlur(
+            src, (params['radius'] as num?)?.toDouble() ?? 5),
+        'unsharpMask' => ImageFilters.unsharpMask(
+            src,
+            (params['radius'] as num?)?.toDouble() ?? 2,
+            (params['amount'] as num?)?.toDouble() ?? 0.8,
+            threshold: (params['threshold'] as num?)?.toInt() ?? 0,
+          ),
+        'levels' => ImageFilters.levels(
+            src,
+            inBlack: (params['in_black'] as num?)?.toInt() ?? 0,
+            inWhite: (params['in_white'] as num?)?.toInt() ?? 255,
+            gamma: (params['gamma'] as num?)?.toDouble() ?? 1,
+          ),
+        'curves' => ImageFilters.curves(src, curvePoints),
+        'hueSaturation' => ImageFilters.hueSaturation(
+            src,
+            hueShift: (params['hue'] as num?)?.toDouble() ?? 0,
+            saturationScale:
+                (params['saturation'] as num?)?.toDouble() ?? 1,
+            lightnessScale: (params['lightness'] as num?)?.toDouble() ?? 1,
+          ),
+        _ => src.copy(),
+      };
+
+  List<({double x, double y})> get curvePoints =>
+      ((params['points'] as List?) ?? const [])
+          .map((p) => (
+                x: (p['x'] as num).toDouble(),
+                y: (p['y'] as num).toDouble(),
+              ))
+          .toList();
+
+  Map<String, dynamic> toJson() => {'kind': kind, 'params': params};
+
+  factory AdjustmentSpec.fromJson(Map<String, dynamic> json) =>
+      AdjustmentSpec(json['kind'] as String,
+          (json['params'] as Map).cast<String, dynamic>());
+}
+
 /// Pure-pixel image filters. Every function returns a new [RgbaImage] and
 /// never mutates its input, so they are trivially testable and composable.
 class ImageFilters {

@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/painting.dart';
 import 'drawable.dart';
 import 'mask_stroke.dart';
+import '../services/image_filters.dart';
 
 /// Layer blend modes, grouped by visual family.
 ///
@@ -233,6 +234,14 @@ class Layer {
   /// Bumped whenever mask strokes change, so raster caches rebuild.
   int maskVersion = 0;
 
+  /// Clone layer: mirrors the content of the layer with this id. Clone
+  /// layers have no drawables/image of their own.
+  String? cloneOfId;
+
+  /// Adjustment layer: non-destructively applies this filter to everything
+  /// below it in the stack. Adjustment layers render no content of their own.
+  AdjustmentSpec? adjustment;
+
   /// Bumped whenever the image transform (offset/rotation/scale/flip)
   /// changes, so the painter's raster cache knows to re-render this layer.
   int imageVersion = 0;
@@ -255,6 +264,8 @@ class Layer {
     this.groupId,
     this.maskStrokes,
     this.maskEnabled = true,
+    this.cloneOfId,
+    this.adjustment,
     List<Drawable>? drawables,
   }) : drawables = drawables ?? [];
 
@@ -276,6 +287,8 @@ class Layer {
     String? groupId,
     List<MaskStroke>? maskStrokes,
     bool? maskEnabled,
+    String? cloneOfId,
+    AdjustmentSpec? adjustment,
     List<Drawable>? drawables,
   }) =>
       Layer(
@@ -296,6 +309,8 @@ class Layer {
         groupId: groupId ?? this.groupId,
         maskStrokes: maskStrokes ?? this.maskStrokes,
         maskEnabled: maskEnabled ?? this.maskEnabled,
+        cloneOfId: cloneOfId ?? this.cloneOfId,
+        adjustment: adjustment ?? this.adjustment,
         drawables: drawables ?? this.drawables,
       );
 
@@ -316,6 +331,8 @@ class Layer {
         'groupId': groupId,
         'maskEnabled': maskEnabled,
         'maskStrokes': maskStrokes?.map((s) => s.toJson()).toList(),
+        if (cloneOfId != null) 'cloneOfId': cloneOfId,
+        if (adjustment != null) 'adjustment': adjustment!.toJson(),
         'drawables': drawables.map((d) => d.toJson()).toList(),
       };
 
@@ -343,6 +360,11 @@ class Layer {
         maskStrokes: (json['maskStrokes'] as List?)
             ?.map((s) => MaskStroke.fromJson(s as Map<String, dynamic>))
             .toList(),
+        cloneOfId: json['cloneOfId'] as String?,
+        adjustment: json['adjustment'] != null
+            ? AdjustmentSpec.fromJson(
+                (json['adjustment'] as Map).cast<String, dynamic>())
+            : null,
         drawables: (json['drawables'] as List?)
                 ?.map(
                     (d) => Drawable.fromJson(d as Map<String, dynamic>))

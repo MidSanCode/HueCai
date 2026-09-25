@@ -351,6 +351,63 @@ class ProjectProvider extends ChangeNotifier {
 
   // ------------------------------------------------------------- filters
 
+  /// Adds a clone of the layer at [index] right above it. The clone mirrors
+  /// the source's content live (edits to the source show up in the clone).
+  void addCloneLayer(int index) {
+    final project = _currentProject;
+    if (project == null || index < 0 || index >= project.layers.length) return;
+    final src = project.layers[index];
+    if (src.cloneOfId != null || src.adjustment != null) return;
+    saveSnapshot();
+    project.layers.insert(
+      index + 1,
+      Layer(
+        id: _uuid.v4(),
+        name: '${src.name} ⧉',
+        cloneOfId: src.id,
+      ),
+    );
+    _markChanged();
+  }
+
+  /// Adds an adjustment layer above the layer at [index] with [spec].
+  void addAdjustmentLayer(int index, AdjustmentSpec spec) {
+    final project = _currentProject;
+    if (project == null) return;
+    final at = (index + 1).clamp(0, project.layers.length);
+    saveSnapshot();
+    project.layers.insert(
+      at,
+      Layer(
+        id: _uuid.v4(),
+        name: _adjustmentName(spec),
+        adjustment: spec,
+      ),
+    );
+    project.currentLayerIndex = at;
+    _markChanged();
+  }
+
+  static String _adjustmentName(AdjustmentSpec spec) => switch (spec.kind) {
+        'gaussianBlur' => 'filter.gaussian_blur'.tr(),
+        'unsharpMask' => 'filter.unsharp_mask'.tr(),
+        'levels' => 'filter.levels'.tr(),
+        'curves' => 'filter.curves'.tr(),
+        'hueSaturation' => 'filter.hue_saturation'.tr(),
+        _ => spec.kind,
+      };
+
+  /// Updates an adjustment layer's filter parameters.
+  void updateAdjustmentLayer(int index, AdjustmentSpec spec) {
+    final project = _currentProject;
+    if (project == null || index < 0 || index >= project.layers.length) return;
+    if (project.layers[index].adjustment == null) return;
+    saveSnapshot();
+    project.layers[index].adjustment = spec;
+    project.layers[index].imageVersion++; // bust render caches
+    _markChanged();
+  }
+
   /// Flattens the layer at [index], applies [filter] to its pixels, and
   /// stores the result as the layer's bitmap (drawables are baked in).
   ///
