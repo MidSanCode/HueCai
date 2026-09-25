@@ -1416,6 +1416,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         opacity: tp.brushOpacity,
         isSmudge: true,
         brushType: tp.brushType,
+        tipTexture: tp.currentBrush.tipTexture,
       );
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
@@ -1448,6 +1449,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         opacity: tp.brushOpacity,
         leaves: <LeafData>[],
         brushType: tp.brushType,
+        tipTexture: tp.currentBrush.tipTexture,
       );
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
@@ -1480,6 +1482,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         strokeWidth: tp.brushSize,
         opacity: 1.0,
         brushType: tp.brushType,
+        tipTexture: tp.currentBrush.tipTexture,
         isLiquify: true,
       );
       _currentDrawable = drawable;
@@ -1568,6 +1571,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         strokeWidth: tp.brushSize,
         opacity: tp.brushOpacity,
         brushType: tp.brushType,
+        tipTexture: tp.currentBrush.tipTexture,
       );
       _currentDrawable = drawable;
       pp.addDrawable(drawable);

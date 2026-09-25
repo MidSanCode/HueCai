@@ -1,3 +1,5 @@
+import '../services/brush_texture.dart';
+
 enum BrushType {
   hardRound,
   softRound,
@@ -20,6 +22,7 @@ class Brush {
   double opacity;
   double flow;
   double spacing;
+  BrushTexture tipTexture;
 
   Brush({
     required this.type,
@@ -29,6 +32,7 @@ class Brush {
     this.opacity = 1.0,
     this.flow = 1.0,
     this.spacing = 0.1,
+    this.tipTexture = BrushTexture.none,
   });
 
   static List<Brush> defaults() => [
@@ -53,6 +57,7 @@ class Brush {
     double? opacity,
     double? flow,
     double? spacing,
+    BrushTexture? tipTexture,
   }) =>
       Brush(
         type: type ?? this.type,
@@ -62,5 +67,6 @@ class Brush {
         opacity: opacity ?? this.opacity,
         flow: flow ?? this.flow,
         spacing: spacing ?? this.spacing,
+        tipTexture: tipTexture ?? this.tipTexture,
       );
 }

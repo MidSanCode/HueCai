@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../providers/tool_provider.dart';
 import '../../providers/app_settings.dart';
 import '../../services/stroke_stabilizer.dart';
+import '../../services/brush_texture.dart';
 import '../common/curve_editor.dart';
 import '../../models/brush.dart';
 
@@ -76,6 +77,30 @@ class _BrushEditorDialogState extends State<BrushEditorDialog> {
               const SizedBox(height: 12),
               _slider('brush.size'.tr(), tp.brushSize, 0.5, 100, tp.setBrushSize, tp.brushSize.toStringAsFixed(1)),
               _slider('brush.opacity'.tr(), tp.brushOpacity, 0, 1, tp.setBrushOpacity, '${(tp.brushOpacity * 100).round()}%'),
+              const Divider(height: 20),
+              // Tip texture selection
+              Text('brush.tip_texture'.tr(), style: theme.textTheme.labelMedium),
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 32,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: BrushTexture.values.map((tex) {
+                    final selected = tp.currentBrush.tipTexture == tex;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: ChoiceChip(
+                        label: Text('brush.texture_${tex.name}'.tr(),
+                            style: const TextStyle(fontSize: 10)),
+                        selected: selected,
+                        onSelected: (_) => tp.setBrushTipTexture(tex),
+                        visualDensity: VisualDensity.compact,
+                        labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
               const Divider(height: 20),
               // Velocity width section
               Text('brush.velocity'.tr(), style: theme.textTheme.labelMedium),

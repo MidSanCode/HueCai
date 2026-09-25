@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'brush.dart';
+import '../services/brush_texture.dart';
 
 enum ShapeType { rect, ellipse, polygon, line, curve }
 
@@ -89,6 +90,9 @@ class Drawable {
   String? fontFamily;
   BrushType brushType;
 
+  /// Tip texture applied to stamped brush marks (none = smooth tip).
+  BrushTexture tipTexture;
+
   Drawable({
     required this.id,
     this.isShape = false,
@@ -116,6 +120,7 @@ class Drawable {
     this.curveHandles,
     this.fontFamily,
     this.brushType = BrushType.hardRound,
+    this.tipTexture = BrushTexture.none,
   }) : gradientStops = gradientStops ?? [];
 
   Rect get bounds {
@@ -385,6 +390,7 @@ class Drawable {
     List<int>? fillSpans,
     List<Offset?>? curveHandles,
     String? fontFamily,
+    BrushTexture? tipTexture,
   }) =>
       Drawable(
         id: id ?? this.id,
@@ -411,6 +417,7 @@ class Drawable {
         fillSpans: fillSpans ?? (this.fillSpans != null ? List.from(this.fillSpans!) : null),
         curveHandles: curveHandles ?? (this.curveHandles != null ? List<Offset?>.from(this.curveHandles!) : null),
         fontFamily: fontFamily ?? this.fontFamily,
+        tipTexture: tipTexture ?? this.tipTexture,
       );
 
   Map<String, dynamic> toJson() => {
@@ -430,6 +437,7 @@ class Drawable {
         'gradientStops': gradientStops.map((s) => s.toJson()).toList(),
         'gradientAngle': gradientAngle,
         'brushType': brushType.name,
+        if (tipTexture != BrushTexture.none) 'tipTexture': tipTexture.name,
         if (textData != null) 'text': textData,
         if (textData != null) 'fontSize': fontSize,
         if (fontFamily != null) 'fontFamily': fontFamily,
@@ -476,6 +484,9 @@ class Drawable {
         brushType: json['brushType'] != null
             ? BrushType.values.byName(json['brushType'] as String)
             : BrushType.hardRound,
+        tipTexture: json['tipTexture'] != null
+            ? BrushTexture.values.byName(json['tipTexture'] as String)
+            : BrushTexture.none,
         isLiquify: json['isLiquify'] as bool? ?? false,
         textData: json['text'] as String?,
         fontFamily: json['fontFamily'] as String?,
@@ -598,6 +609,12 @@ class Drawable {
         break;
     }
 
+    // Textured tip takes precedence over the built-in grain engine when the
+    // user explicitly picked a texture.
+    if (tipTexture != BrushTexture.none && _drawTexturedStroke(canvas, paint)) {
+      return;
+    }
+
     final dryness = _grainDryness;
     if (dryness > 0) {
       _drawGrainStroke(canvas, paint, dryness);
@@ -654,6 +671,24 @@ class Drawable {
 
   double _widthAt(int i) =>
       widths != null && i < widths!.length ? widths![i] : strokeWidth;
+
+  /// Stamps the colorized tip sprite at every stroke point. Returns false
+  /// (caller falls back to plain rendering) while the sprite is decoding.
+  bool _drawTexturedStroke(Canvas canvas, Paint paint) {
+    final sprite = BrushTextures.sprite(tipTexture, color);
+    if (sprite == null) return false;
+    final stamp = Paint()..filterQuality = FilterQuality.medium;
+    final src =
+        Rect.fromLTWH(0, 0, sprite.width.toDouble(), sprite.height.toDouble());
+    for (int i = 0; i < points.length; i++) {
+      final w = max(1.0, _widthAt(i));
+      stamp.color = Colors.white
+          .withValues(alpha: (opacity * _inkAt(i)).clamp(0.0, 1.0));
+      final dst = Rect.fromCenter(center: points[i], width: w, height: w);
+      canvas.drawImageRect(sprite, src, dst, stamp);
+    }
+    return true;
+  }
 
   /// Dry-media stroke rendering: the stroke is stamped as a chain of
   /// slightly jittered ink dots along the path. Skipping occasional dots

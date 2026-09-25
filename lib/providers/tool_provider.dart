@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/brush.dart';
 import '../models/drawable.dart';
+import '../services/brush_texture.dart';
 
 enum ToolType {
   move,
@@ -135,6 +136,11 @@ class ToolProvider extends ChangeNotifier {
 
   void setBrushType(BrushType type) {
     _currentBrush = _currentBrush.copyWith(type: type);
+    notifyListeners();
+  }
+
+  void setBrushTipTexture(BrushTexture texture) {
+    _currentBrush = _currentBrush.copyWith(tipTexture: texture);
     notifyListeners();
   }
 
