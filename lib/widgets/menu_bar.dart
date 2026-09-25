@@ -8,6 +8,7 @@ import '../providers/project_provider.dart';
 import '../providers/app_settings.dart';
 import '../services/project_service.dart';
 import '../services/stroke_stabilizer.dart';
+import '../services/assist_ruler.dart';
 import '../models/drawable.dart';
 import '../screens/settings_screen.dart';
 import '../screens/editor_screen.dart';
@@ -218,6 +219,21 @@ class _FullMenuBar extends StatelessWidget {
             _MenuItem('menu.tool.perspective'.tr(), Icons.grid_on,
                 () => context.read<ToolProvider>().togglePerspectiveGuide(),
                 checked: context.watch<ToolProvider>().perspectiveGuideEnabled),
+            const _MenuDivider(),
+            _MenuItem('ruler.add_parallel'.tr(), Icons.horizontal_rule,
+                () => _addRuler(context, RulerType.parallel)),
+            _MenuItem('ruler.add_ellipse'.tr(), Icons.circle_outlined,
+                () => _addRuler(context, RulerType.ellipse)),
+            _MenuItem('ruler.add_spline'.tr(), Icons.timeline,
+                () => _addRuler(context, RulerType.spline)),
+            _MenuItem('ruler.snap'.tr(), Icons.center_focus_strong,
+                () {
+                  final tp = context.read<ToolProvider>();
+                  tp.setRulerSnapEnabled(!tp.rulerSnapEnabled);
+                },
+                checked: context.watch<ToolProvider>().rulerSnapEnabled),
+            _MenuItem('ruler.clear'.tr(), Icons.delete_sweep,
+                () => context.read<ToolProvider>().clearRulers()),
           ]),
           _MenuButton(label: 'menu.settings'.tr(), children: [
             _MenuItem('menu.settings.brush'.tr(), Icons.brush, () {
@@ -528,6 +544,16 @@ void _showStabilizerDialog(BuildContext context) {
       ),
     ),
   );
+}
+
+void _addRuler(BuildContext context, RulerType type) {
+  final tp = context.read<ToolProvider>();
+  final pp = context.read<ProjectProvider>();
+  final s = pp.currentProject?.settings;
+  final center = s != null
+      ? Offset(s.width / 2, s.height / 2)
+      : const Offset(200, 200);
+  tp.addRuler(type, center);
 }
 
 void _showBackgroundColorDialog(BuildContext context) {

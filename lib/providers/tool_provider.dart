@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/brush.dart';
 import '../models/drawable.dart';
 import '../services/brush_texture.dart';
+import '../services/assist_ruler.dart';
 
 enum ToolType {
   move,
@@ -34,6 +35,8 @@ class ToolProvider extends ChangeNotifier {
   bool _isStandardMode = false;
   bool _symmetryEnabled = false;
   bool _perspectiveGuideEnabled = false;
+  final List<AssistRuler> _rulers = [];
+  bool _rulerSnapEnabled = true;
   // Last font chosen in the text dialog; remembered across placements.
   String _textFontFamily = 'Microsoft YaHei';
   final List<Color> _memoryColors = List.filled(20, Colors.transparent);
@@ -51,6 +54,73 @@ class ToolProvider extends ChangeNotifier {
   bool get isStandardMode => _isStandardMode;
   bool get symmetryEnabled => _symmetryEnabled;
   bool get perspectiveGuideEnabled => _perspectiveGuideEnabled;
+  List<AssistRuler> get rulers => List.unmodifiable(_rulers);
+  bool get rulerSnapEnabled => _rulerSnapEnabled;
+
+  void addRuler(RulerType type, Offset center) {
+    _rulers.add(AssistRuler(
+      id: 'ruler_${_rulers.length}_${DateTime.now().microsecondsSinceEpoch}',
+      type: type,
+      center: center,
+      points: type == RulerType.spline
+          ? [
+              center + const Offset(-100, 40),
+              center + const Offset(-33, -40),
+              center + const Offset(33, 40),
+              center + const Offset(100, -40),
+            ]
+          : [],
+    ));
+    notifyListeners();
+  }
+
+  void removeRuler(String id) {
+    _rulers.removeWhere((r) => r.id == id);
+    notifyListeners();
+  }
+
+  void clearRulers() {
+    _rulers.clear();
+    notifyListeners();
+  }
+
+  /// Mutates a ruler (handle drag) and notifies.
+  void updateRuler(String id, void Function(AssistRuler) edit) {
+    final i = _rulers.indexWhere((r) => r.id == id);
+    if (i < 0) return;
+    edit(_rulers[i]);
+    notifyListeners();
+  }
+
+  AssistRuler? rulerById(String id) {
+    for (final r in _rulers) {
+      if (r.id == id) return r;
+    }
+    return null;
+  }
+
+  void setRulerSnapEnabled(bool v) {
+    _rulerSnapEnabled = v;
+    notifyListeners();
+  }
+
+  /// Snaps [p] to the nearest active ruler, or returns [p] unchanged when
+  /// snapping is off or no ruler exists.
+  Offset snapToRulers(Offset p) {
+    if (!_rulerSnapEnabled || _rulers.isEmpty) return p;
+    Offset best = p;
+    var bestDist = double.infinity;
+    for (final r in _rulers) {
+      if (!r.visible) continue;
+      final q = r.snapPoint(p);
+      final d = (q - p).distanceSquared;
+      if (d < bestDist) {
+        bestDist = d;
+        best = q;
+      }
+    }
+    return best;
+  }
   String get textFontFamily => _textFontFamily;
   List<Color> get memoryColors => _memoryColors;
 

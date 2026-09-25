@@ -13,6 +13,7 @@ import '../../providers/canvas_provider.dart';
 import '../../providers/project_provider.dart';
 import '../../providers/app_settings.dart';
 import '../../services/stroke_stabilizer.dart';
+import '../../services/assist_ruler.dart';
 import '../../utils/logger.dart';
 import '../dialogs/text_input_dialog.dart';
 
@@ -960,6 +961,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
         _tabDragIndex = handle;
         return;
       }
+      // Rulers: dragging a ruler handle (move tool).
+      final rulerHit = _rulerHandleAt(canvasPos, tp);
+      if (rulerHit != null) {
+        _rulerDragId = rulerHit.$1;
+        _rulerDragHandle = rulerHit.$2;
+        return;
+      }
       final viewScale = context.read<CanvasProvider>().scale;
       // Selected text: transform handles (rotate knob / corners) win.
       final sel = pp.selectedDrawable;
@@ -1258,6 +1266,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
   static const int _perspectiveMaxPoints = 3;
   final List<Offset> _perspectivePoints = [];
 
+  // Ruler editing state: which ruler + handle is being dragged.
+  String? _rulerDragId;
+  int _rulerDragHandle = -1;
+
+  // Vanishing-point stroke snapping: captured at brush-down so the whole
+  // stroke follows the ray from the nearest VP through the first point.
+  Offset? _vpSnapOrigin;
+  double _vpSnapAngle = 0;
+
   Offset _defaultPerspectivePoint(int i, double w, double h) => switch (i) {
         0 => Offset(w * 0.25, h * 0.25),
         1 => Offset(w * 0.75, h * 0.25),
@@ -1299,6 +1316,20 @@ class _PaintCanvasState extends State<PaintCanvas> {
       canvasPos.dy.clamp(-h * 0.5, h * 1.5),
     );
     setState(() {});
+  }
+
+  /// Hit-tests ruler handles (move tool). Returns (rulerId, handleIndex).
+  (String, int)? _rulerHandleAt(Offset canvasPos, ToolProvider tp) {
+    for (final ruler in tp.rulers) {
+      if (!ruler.visible) continue;
+      final handles = ruler.handles;
+      for (var i = 0; i < handles.length; i++) {
+        if ((handles[i] - canvasPos).distance <= 24) {
+          return (ruler.id, i);
+        }
+      }
+    }
+    return null;
   }
 
   /// Text tool: ask for the string, then commit a text drawable anchored at
@@ -1576,6 +1607,28 @@ class _PaintCanvasState extends State<PaintCanvas> {
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
       _dragConfirmed = true;
+      // VP snapping: when the perspective guide is on and no ruler exists,
+      // the whole stroke locks onto the ray from the nearest vanishing
+      // point through the stroke start.
+      if (tp.perspectiveGuideEnabled && tp.rulers.isEmpty) {
+        final vps = _perspectiveViewPoints();
+        if (vps.isNotEmpty) {
+          var nearest = vps.first;
+          var best = (canvasPos - nearest).distanceSquared;
+          for (final vp in vps.skip(1)) {
+            final d = (canvasPos - vp).distanceSquared;
+            if (d < best) {
+              best = d;
+              nearest = vp;
+            }
+          }
+          if (best > 1e-6) {
+            _vpSnapOrigin = nearest;
+            final d = canvasPos - nearest;
+            _vpSnapAngle = atan2(d.dy, d.dx);
+          }
+        }
+      }
       // Symmetry: create a mirrored twin drawable that is driven point by
       // point while the primary stroke advances.
       _syncMirrorTwin(tp, pp, canvasPos);
@@ -1620,6 +1673,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
       }
       if (tp.perspectiveGuideEnabled && _tabDragIndex != null) {
         _movePerspectiveHandle(canvasPos);
+        return;
+      }
+      if (_rulerDragId != null) {
+        final id = _rulerDragId!;
+        final handle = _rulerDragHandle;
+        tp.updateRuler(id, (r) => r.moveHandle(handle, canvasPos));
         return;
       }
       _onSelectedDragMove(canvasPos, pp);
@@ -1877,6 +1936,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
         case StabilizerMode.off:
           drawPos = canvasPos;
       }
+      // Ruler / vanishing-point snapping rides on top of stabilization.
+      if (tp.rulers.isNotEmpty) {
+        drawPos = tp.snapToRulers(drawPos);
+      } else if (_vpSnapOrigin != null) {
+        drawPos = AssistRuler.snapToLine(drawPos, _vpSnapOrigin!, _vpSnapAngle);
+      }
     final usesInk = (tp.currentTool == ToolType.brush ||
             tp.currentTool == ToolType.eraser) &&
         as.velocityInkEnabled;
@@ -2030,6 +2095,9 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _dragConfirmed = false;
     _mirrorTwin = null;
     _tabDragIndex = null;
+    _rulerDragId = null;
+    _rulerDragHandle = -1;
+    _vpSnapOrigin = null;
   }
 
   void _cancelMultiClickShape() {
@@ -2274,6 +2342,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
                           perspectivePoints: tp.perspectiveGuideEnabled
                               ? _perspectiveViewPoints()
                               : const [],
+                          rulers: tp.rulers,
                           curveHoverInsert: _curveHoverInsert,
                           curvePlacing: _isPlacingShapePoints,
                           moveToolActive: isMoveTool,
@@ -2400,6 +2469,7 @@ class _CanvasPainter extends CustomPainter {
   final bool mirrorEnabled;
   final bool perspectiveEnabled;
   final List<Offset> perspectivePoints;
+  final List<AssistRuler> rulers;
   final bool curvePlacing;
   final Offset? curveHoverInsert;
   final bool moveToolActive;
@@ -2424,6 +2494,7 @@ class _CanvasPainter extends CustomPainter {
     this.mirrorEnabled = false,
     this.perspectiveEnabled = false,
     this.perspectivePoints = const [],
+    this.rulers = const [],
     this.curvePlacing = false,
     this.curveHoverInsert,
     this.moveToolActive = false,
@@ -2732,6 +2803,52 @@ class _CanvasPainter extends CustomPainter {
           handleR / viewScale,
           Paint()
             ..color = const Color(0xFF0EA5E9)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0 / viewScale,
+        );
+      }
+    }
+
+    // Ruler overlay: geometry line + draggable handles.
+    for (final ruler in rulers) {
+      if (!ruler.visible) continue;
+      final linePaint = Paint()
+        ..color = const Color(0xFFF59E0B).withValues(alpha: 0.55)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2 / viewScale;
+      switch (ruler.type) {
+        case RulerType.parallel:
+          final dir = Offset(cos(ruler.angle), sin(ruler.angle));
+          canvas.drawLine(ruler.center - dir * 20000,
+              ruler.center + dir * 20000, linePaint);
+        case RulerType.ellipse:
+          canvas.drawOval(
+            Rect.fromCenter(
+                center: ruler.center,
+                width: ruler.radiusX * 2,
+                height: ruler.radiusY * 2),
+            linePaint,
+          );
+        case RulerType.spline:
+          final samples = ruler.splineSamples();
+          if (samples.length >= 2) {
+            final path = ui.Path()..moveTo(samples.first.dx, samples.first.dy);
+            for (final s in samples.skip(1)) {
+              path.lineTo(s.dx, s.dy);
+            }
+            canvas.drawPath(path, linePaint);
+          }
+      }
+      // Handles.
+      const handleR = 8.0;
+      for (final h in ruler.handles) {
+        canvas.drawCircle(
+            h, handleR / viewScale, Paint()..color = Colors.white);
+        canvas.drawCircle(
+          h,
+          handleR / viewScale,
+          Paint()
+            ..color = const Color(0xFFF59E0B)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 2.0 / viewScale,
         );
