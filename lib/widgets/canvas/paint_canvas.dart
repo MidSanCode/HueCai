@@ -207,7 +207,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     try {
       final mask = SelectionMask(snap.width, snap.height);
       mask.floodFill(canvasPos, bytes, 30, true);
-      pp.applySelectionShape(mask, pp.selectionAddMode);
+      pp.applySelectionShapeWithMode(mask, pp.selectionCombineMode);
     } catch (_) {}
   }
 
@@ -1685,7 +1685,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         for (int i = 1; i <= steps; i++) {
           mask.fillCircle(Offset.lerp(from, canvasPos, i / steps)!, radius, true);
         }
-        pp.applySelectionShape(mask, pp.selectionAddMode);
+        pp.applySelectionShapeWithMode(mask, pp.selectionCombineMode);
         _brushSelLast = canvasPos;
         return;
       }
@@ -1978,7 +1978,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
         final h = widget.project.settings.height.toInt();
         final mask = SelectionMask(w, h);
         mask.fillPolygon(_lassoPoints, true);
-        pp.applySelectionShape(mask, pp.selectionAddMode);
+        pp.applySelectionShapeWithMode(mask, pp.selectionCombineMode);
       } else if (_currentDrawable != null && (_currentDrawable!.isShape || pp.selectionMethod != SelectionMethod.lasso)) {
         if (pp.selectionMethod == SelectionMethod.rect || pp.selectionMethod == SelectionMethod.ellipse) {
           final rect = Rect.fromPoints(_selectStart!, _currentDrawable!.points.last);
@@ -1990,7 +1990,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
           } else {
             mask.fillRect(rect, true);
           }
-          pp.applySelectionShape(mask, pp.selectionAddMode);
+          pp.applySelectionShapeWithMode(mask, pp.selectionCombineMode);
         }
         pp.deleteDrawable(_currentDrawable!.id);
       }

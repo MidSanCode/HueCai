@@ -52,7 +52,7 @@ class _SelectingContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final pp = context.watch<ProjectProvider>();
     final method = pp.selectionMethod;
-    final addMode = pp.selectionAddMode;
+    final combineMode = pp.selectionCombineMode;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -72,8 +72,8 @@ class _SelectingContent extends StatelessWidget {
             child: SizedBox(width: 1, height: 24, child: VerticalDivider()),
           ),
 
-          // Add / Subtract
-          _modeToggle(context, addMode),
+          // Combine mode: add / subtract / intersect
+          _combineToggle(context, combineMode),
 
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 4),
@@ -83,9 +83,58 @@ class _SelectingContent extends StatelessWidget {
           // Invert
           _iconBtn(context, Icons.invert_colors, 'selection.invert', () => pp.invertSelection()),
 
+          // Feather / grow / shrink
+          _iconBtn(context, Icons.blur_on, 'selection.feather',
+              () => _askPixels(context, 'selection.feather', (px) => pp.featherSelection(px))),
+          _iconBtn(context, Icons.add_circle_outline, 'selection.grow',
+              () => _askPixels(context, 'selection.grow', (px) => pp.growSelection(px))),
+          _iconBtn(context, Icons.remove_circle_outline, 'selection.shrink',
+              () => _askPixels(context, 'selection.shrink', (px) => pp.growSelection(-px))),
+
           // Confirm
           _iconBtn(context, Icons.check, 'selection.confirm', () => pp.confirmSelection()),
         ],
+      ),
+    );
+  }
+
+  /// Small dialog asking for a pixel amount, applied via [apply].
+  void _askPixels(BuildContext context, String titleKey, ValueChanged<int> apply) {
+    double value = 4;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: Text(titleKey.tr()),
+          content: SizedBox(
+            width: 260,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${value.round()} px',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Slider(
+                  value: value, min: 1, max: 50, divisions: 49,
+                  label: '${value.round()}',
+                  onChanged: (v) => setState(() => value = v),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('dialog.cancel'.tr()),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                apply(value.round());
+              },
+              child: Text('dialog.confirm'.tr()),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -106,24 +155,38 @@ class _SelectingContent extends StatelessWidget {
     );
   }
 
-  Widget _modeToggle(BuildContext context, bool addMode) {
+  Widget _combineToggle(BuildContext context, SelectionCombineMode mode) {
     final pp = context.read<ProjectProvider>();
-    return GestureDetector(
-      onTap: () => pp.setSelectionAddMode(!addMode),
+    final theme = Theme.of(context);
+    Widget seg(SelectionCombineMode m, IconData icon) {
+      final active = mode == m;
+      return GestureDetector(
+        onTap: () => pp.setSelectionCombineMode(m),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Icon(
+            icon,
+            size: 14,
+            color: active ? theme.colorScheme.primary : Colors.grey,
+          ),
+        ),
+      );
+    }
+
+    return Tooltip(
+      message: 'selection.combine_mode'.tr(),
       child: Container(
-        width: 60, height: 28,
+        height: 28,
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          color: theme.colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.add, size: 14, color: addMode ? Colors.blue : Colors.grey),
-            const SizedBox(width: 4),
-            Text('|', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-            const SizedBox(width: 4),
-            Icon(Icons.remove, size: 14, color: !addMode ? Colors.red : Colors.grey),
+            seg(SelectionCombineMode.add, Icons.add),
+            seg(SelectionCombineMode.subtract, Icons.remove),
+            seg(SelectionCombineMode.intersect, Icons.join_inner),
           ],
         ),
       ),

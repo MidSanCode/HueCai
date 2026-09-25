@@ -895,7 +895,7 @@ class ProjectProvider extends ChangeNotifier {
 
   SelectionPhase _selectionPhase = SelectionPhase.none;
   SelectionMethod _selectionMethod = SelectionMethod.rect;
-  bool _selectionAddMode = true;
+  SelectionCombineMode _selectionCombineMode = SelectionCombineMode.add;
 
   /// True while an editing preview should punch a hole where pixels were
   /// cut, so the floating clip visibly moves away from empty space.
@@ -920,7 +920,11 @@ class ProjectProvider extends ChangeNotifier {
 
   SelectionPhase get selectionPhase => _selectionPhase;
   SelectionMethod get selectionMethod => _selectionMethod;
-  bool get selectionAddMode => _selectionAddMode;
+  SelectionCombineMode get selectionCombineMode => _selectionCombineMode;
+
+  /// Compatibility shim for older call sites: true unless subtracting.
+  bool get selectionAddMode =>
+      _selectionCombineMode != SelectionCombineMode.subtract;
   bool get selectionCutout => _selectionCutout;
   ui.Image? get selectionSolidImage => _selectionSolidImage;
   SelectionMask? get selectionMask => _selectionMask;
@@ -944,7 +948,13 @@ class ProjectProvider extends ChangeNotifier {
   }
 
   void setSelectionAddMode(bool v) {
-    _selectionAddMode = v;
+    _selectionCombineMode =
+        v ? SelectionCombineMode.add : SelectionCombineMode.subtract;
+    notifyListeners();
+  }
+
+  void setSelectionCombineMode(SelectionCombineMode mode) {
+    _selectionCombineMode = mode;
     notifyListeners();
   }
 
@@ -1005,13 +1015,43 @@ class ProjectProvider extends ChangeNotifier {
 
   void applySelectionShape(SelectionMask shape, bool add) {
     if (_selectionMask == null) return;
-    if (_selectionMask!.isEmpty && !add) {
-      // Nothing selected yet: a fresh drag always starts a new selection
-      // (PS-like), even when the add/subtract toggle is on subtract.
+    final mode = add ? SelectionCombineMode.add : SelectionCombineMode.subtract;
+    applySelectionShapeWithMode(shape, mode);
+  }
+
+  /// Combines [shape] into the current selection with the given boolean
+  /// [mode]. A fresh drag on an empty selection always starts a new
+  /// selection (PS-like), regardless of the combine mode.
+  void applySelectionShapeWithMode(SelectionMask shape, SelectionCombineMode mode) {
+    if (_selectionMask == null) return;
+    if (_selectionMask!.isEmpty) {
       _selectionMask!.applyMask(shape, true);
     } else {
-      _selectionMask!.applyMask(shape, add);
+      switch (mode) {
+        case SelectionCombineMode.add:
+          _selectionMask!.applyMask(shape, true);
+        case SelectionCombineMode.subtract:
+          _selectionMask!.applyMask(shape, false);
+        case SelectionCombineMode.intersect:
+          _selectionMask!.intersect(shape);
+      }
     }
+    _regenerateMaskImage();
+    notifyListeners();
+  }
+
+  /// Feathers the selection edge by [radius] pixels.
+  void featherSelection(int radius) {
+    if (_selectionMask == null || radius <= 0) return;
+    _selectionMask!.feather(radius);
+    _regenerateMaskImage();
+    notifyListeners();
+  }
+
+  /// Grows (positive) or shrinks (negative) the selection by [px] pixels.
+  void growSelection(int px) {
+    if (_selectionMask == null || px == 0) return;
+    _selectionMask!.grow(px);
     _regenerateMaskImage();
     notifyListeners();
   }

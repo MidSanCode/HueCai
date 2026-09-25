@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 
 enum SelectionMethod { lasso, rect, ellipse, magicWand, brush }
 
+/// How a new selection shape combines with the existing selection.
+enum SelectionCombineMode { add, subtract, intersect }
+
 enum SelectionPhase { none, selecting, selected, editing }
 
 enum TransformMode { scale, warp }
@@ -252,6 +255,32 @@ class SelectionMask {
       } else {
         if (otherData[i] != 0) _data[i] = 0;
       }
+    }
+  }
+
+  /// Intersection: keeps only pixels selected in both masks.
+  void intersect(SelectionMask other) {
+    final otherData = other._data;
+    for (int i = 0; i < _data.length; i++) {
+      if (_data[i] != 0 && otherData[i] == 0) _data[i] = 0;
+    }
+  }
+
+  /// Feathers the selection edge by [radius] pixels: mask values near the
+  /// boundary become partial alpha (0-255) so fills/paints blend smoothly.
+  ///
+  /// Uses the distance transform both inside and outside the region and
+  /// maps the signed distance across a 2*radius band onto 0..255.
+  void feather(int radius) {
+    if (radius <= 0 || isEmpty) return;
+    final distIn = _distanceToNearest(target: false); // distance to unselected
+    final distOut = _distanceToNearest(target: true); // distance to selected
+    final band = radius.toDouble();
+    for (int i = 0; i < _data.length; i++) {
+      // Signed distance: positive inside, negative outside.
+      final signed = _data[i] != 0 ? distIn[i] : -distOut[i];
+      final t = (0.5 + signed / (2 * band)).clamp(0.0, 1.0);
+      _data[i] = (t * 255).round();
     }
   }
 
