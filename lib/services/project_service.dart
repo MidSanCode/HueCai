@@ -359,6 +359,14 @@ class ProjectService {
       }
       for (final layer in project.layers) {
         if (!layer.visible) continue;
+        // Isolate each layer so its blend mode applies only to its own
+        // pixels when composited back.
+        canvas.saveLayer(
+          Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+          Paint()
+            ..color = Colors.white.withValues(alpha: layer.opacity)
+            ..blendMode = layer.blendMode.toFlutterBlendMode(),
+        );
         for (final d in layer.drawables) {
           d.draw(canvas, Paint());
         }
@@ -374,10 +382,11 @@ class ProjectService {
             img,
             Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
             Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
-            Paint()..color = Colors.white.withValues(alpha: layer.opacity),
+            Paint(),
           );
           canvas.restore();
         }
+        canvas.restore();
       }
       canvas.restore();
       final picture = recorder.endRecording();

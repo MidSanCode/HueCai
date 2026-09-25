@@ -316,7 +316,7 @@ class _LayerItemState extends State<_LayerItem> {
               ListTile(
                 leading: Icon(Icons.color_lens, size: 18),
                 title: Text('layer.blend_mode'.tr()),
-                subtitle: Text('layer.${widget.layer.blendMode.name}'.tr()),
+                subtitle: Text('layer.${widget.layer.blendMode.jsonName}'.tr()),
                 dense: true,
                 onTap: () {
                   Navigator.of(ctx).pop();
@@ -372,7 +372,7 @@ class _LayerItemState extends State<_LayerItem> {
               widget.layer.blendMode == mode ? Icons.radio_button_checked : Icons.radio_button_unchecked,
               size: 18,
             ),
-            title: Text('layer.${mode.name}'.tr()),
+            title: Text('layer.${mode.jsonName}'.tr()),
             dense: true,
           ),
         );

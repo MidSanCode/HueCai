@@ -2,25 +2,145 @@ import 'dart:ui' as ui;
 import 'package:flutter/painting.dart';
 import 'drawable.dart';
 
+/// Layer blend modes, grouped by visual family.
+///
+/// JSON names are snake_case so saved projects stay stable; unknown names
+/// fall back to [normal] on load.
 enum BlendModeExt {
+  // 正常系
   normal,
+  // 变暗系
+  darken,
   multiply,
+  colorBurn,
+  // 变亮系
+  lighten,
   screen,
-  overlay;
+  colorDodge,
+  additive,
+  // 对比系
+  overlay,
+  hardLight,
+  softLight,
+  // 反相系
+  difference,
+  exclusion,
+  xor,
+  // 分量系
+  hue,
+  saturation,
+  color,
+  luminosity,
+  // 合成系
+  behind,
+  erase;
 
   BlendMode toFlutterBlendMode() {
     switch (this) {
       case BlendModeExt.normal:
         return BlendMode.srcOver;
+      case BlendModeExt.darken:
+        return BlendMode.darken;
       case BlendModeExt.multiply:
         return BlendMode.multiply;
+      case BlendModeExt.colorBurn:
+        return BlendMode.colorBurn;
+      case BlendModeExt.lighten:
+        return BlendMode.lighten;
       case BlendModeExt.screen:
         return BlendMode.screen;
+      case BlendModeExt.colorDodge:
+        return BlendMode.colorDodge;
+      case BlendModeExt.additive:
+        return BlendMode.plus;
       case BlendModeExt.overlay:
         return BlendMode.overlay;
+      case BlendModeExt.hardLight:
+        return BlendMode.hardLight;
+      case BlendModeExt.softLight:
+        return BlendMode.softLight;
+      case BlendModeExt.difference:
+        return BlendMode.difference;
+      case BlendModeExt.exclusion:
+        return BlendMode.exclusion;
+      case BlendModeExt.xor:
+        return BlendMode.xor;
+      case BlendModeExt.hue:
+        return BlendMode.hue;
+      case BlendModeExt.saturation:
+        return BlendMode.saturation;
+      case BlendModeExt.color:
+        return BlendMode.color;
+      case BlendModeExt.luminosity:
+        return BlendMode.luminosity;
+      case BlendModeExt.behind:
+        return BlendMode.dstOver;
+      case BlendModeExt.erase:
+        return BlendMode.dstOut;
+    }
+  }
+
+  /// JSON 序列化名（snake_case）。
+  String get jsonName {
+    switch (this) {
+      case BlendModeExt.colorBurn:
+        return 'color_burn';
+      case BlendModeExt.colorDodge:
+        return 'color_dodge';
+      case BlendModeExt.hardLight:
+        return 'hard_light';
+      case BlendModeExt.softLight:
+        return 'soft_light';
+      default:
+        return name;
+    }
+  }
+
+  /// Accepts both snake_case and enum names, for backward compatibility
+  /// with projects saved before the blend-mode expansion.
+  static BlendModeExt fromJsonName(String? value) {
+    if (value == null) return BlendModeExt.normal;
+    for (final mode in values) {
+      if (mode.jsonName == value || mode.name == value) return mode;
+    }
+    return BlendModeExt.normal;
+  }
+
+  /// Visual family for grouping in menus.
+  BlendModeFamily get family {
+    switch (this) {
+      case BlendModeExt.normal:
+        return BlendModeFamily.normal;
+      case BlendModeExt.darken:
+      case BlendModeExt.multiply:
+      case BlendModeExt.colorBurn:
+        return BlendModeFamily.darken;
+      case BlendModeExt.lighten:
+      case BlendModeExt.screen:
+      case BlendModeExt.colorDodge:
+      case BlendModeExt.additive:
+        return BlendModeFamily.lighten;
+      case BlendModeExt.overlay:
+      case BlendModeExt.hardLight:
+      case BlendModeExt.softLight:
+        return BlendModeFamily.contrast;
+      case BlendModeExt.difference:
+      case BlendModeExt.exclusion:
+      case BlendModeExt.xor:
+        return BlendModeFamily.inversion;
+      case BlendModeExt.hue:
+      case BlendModeExt.saturation:
+      case BlendModeExt.color:
+      case BlendModeExt.luminosity:
+        return BlendModeFamily.component;
+      case BlendModeExt.behind:
+      case BlendModeExt.erase:
+        return BlendModeFamily.composite;
     }
   }
 }
+
+enum BlendModeFamily { normal, darken, lighten, contrast, inversion, component, composite }
 
 class Layer {
   final String id;
@@ -102,7 +222,7 @@ class Layer {
         'visible': visible,
         'opacity': opacity,
         'locked': locked,
-        'blendMode': blendMode.name,
+        'blendMode': blendMode.jsonName,
         'imagePath': imagePath,
         'imageOffset': {'x': imageOffset.dx, 'y': imageOffset.dy},
         'imageRotation': imageRotation,
@@ -119,9 +239,7 @@ class Layer {
         visible: json['visible'] as bool? ?? true,
         opacity: (json['opacity'] as num?)?.toDouble() ?? 1.0,
         locked: json['locked'] as bool? ?? false,
-        blendMode: BlendModeExt.values.firstWhere(
-            (e) => e.name == json['blendMode'],
-            orElse: () => BlendModeExt.normal),
+        blendMode: BlendModeExt.fromJsonName(json['blendMode'] as String?),
         imagePath: json['imagePath'] as String?,
         imageOffset: json['imageOffset'] != null
             ? Offset(

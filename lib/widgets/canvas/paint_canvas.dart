@@ -2414,14 +2414,22 @@ class _CanvasPainter extends CustomPainter {
           layer.drawables.contains(currentDrawable);
       final entry = layerRasters[layer.id];
       if (entry != null && !drawingHere && entry.version == layerContentVersion(layer)) {
-        // Fast path: blit the cached layer texture.
+        // Fast path: blit the cached layer texture with its blend mode.
         canvas.drawImage(entry.image, Offset.zero,
-            Paint()..color = Colors.white.withValues(alpha: layer.opacity));
+            Paint()
+              ..color = Colors.white.withValues(alpha: layer.opacity)
+              ..blendMode = layer.blendMode.toFlutterBlendMode());
         for (final d in layer.drawables) {
           if (d.selected) _drawSelectionHandles(canvas, d);
         }
         continue;
       }
+      // Slow path: draw content into an isolated layer so the blend mode
+      // applies only to this layer's pixels when it is composited back.
+      final blendPaint = Paint()
+        ..color = Colors.white.withValues(alpha: layer.opacity)
+        ..blendMode = layer.blendMode.toFlutterBlendMode();
+      canvas.saveLayer(docRect, blendPaint);
       if (layer.image != null) {
         final img = layer.image!;
         canvas.save();
@@ -2434,12 +2442,15 @@ class _CanvasPainter extends CustomPainter {
           img,
           Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
           Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(), img.height.toDouble()),
-          Paint()..color = Colors.white.withValues(alpha: layer.opacity),
+          Paint(),
         );
         canvas.restore();
       }
       for (final d in layer.drawables) {
         d.draw(canvas, Paint());
+      }
+      canvas.restore();
+      for (final d in layer.drawables) {
         if (d.selected) {
           if (moveToolActive &&
               d.textData != null &&

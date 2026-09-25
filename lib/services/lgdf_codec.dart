@@ -206,7 +206,7 @@ class LgdfCodec {
         'visible': layer.visible,
         'opacity': layer.opacity,
         'locked': layer.locked,
-        'blend_mode': layer.blendMode.name,
+        'blend_mode': layer.blendMode.jsonName,
         'image_path': layer.imagePath,
         'image_offset': {'x': layer.imageOffset.dx, 'y': layer.imageOffset.dy},
         'image_rotation': layer.imageRotation,
@@ -225,10 +225,7 @@ class LgdfCodec {
       visible: json['visible'] as bool? ?? true,
       opacity: (json['opacity'] as num?)?.toDouble() ?? 1.0,
       locked: json['locked'] as bool? ?? false,
-      blendMode: BlendModeExt.values.firstWhere(
-        (e) => e.name == json['blend_mode'],
-        orElse: () => BlendModeExt.normal,
-      ),
+      blendMode: BlendModeExt.fromJsonName(json['blend_mode'] as String?),
       imagePath: json['image_path'] as String?,
       imageOffset: offset == null
           ? Offset.zero
