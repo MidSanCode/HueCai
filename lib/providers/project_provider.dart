@@ -12,6 +12,7 @@ import '../models/drawable.dart';
 import '../models/selection_data.dart';
 import '../services/project_service.dart';
 import '../services/lgdf_codec.dart';
+import '../models/mask_stroke.dart';
 import '../services/history_service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
@@ -347,6 +348,96 @@ class ProjectProvider extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------- grouping
+
+  /// True while brush/eraser strokes are routed into the current layer's
+  /// mask instead of its content.
+  bool _maskEditing = false;
+  bool get maskEditing => _maskEditing;
+
+  void setMaskEditing(bool value) {
+    if (_maskEditing == value) return;
+    // Entering mask editing requires the current layer to have a mask.
+    if (value && _currentProject?.currentLayer?.maskStrokes == null) return;
+    _maskEditing = value;
+    notifyListeners();
+  }
+
+  /// Adds an empty (fully opaque) mask to the layer at [index] and starts
+  /// mask editing.
+  void addLayerMask(int index) {
+    final project = _currentProject;
+    if (project == null || index < 0 || index >= project.layers.length) return;
+    saveSnapshot();
+    project.layers[index].maskStrokes ??= [];
+    _maskEditing = true;
+    _markChanged();
+  }
+
+  /// Removes the mask (and its strokes) from the layer at [index].
+  void removeLayerMask(int index) {
+    final project = _currentProject;
+    if (project == null || index < 0 || index >= project.layers.length) return;
+    if (project.layers[index].maskStrokes == null) return;
+    saveSnapshot();
+    project.layers[index].maskStrokes = null;
+    project.layers[index].maskEnabled = true;
+    _maskEditing = false;
+    _markChanged();
+  }
+
+  /// Enables/disables the mask without deleting its strokes.
+  void toggleLayerMaskEnabled(int index) {
+    final project = _currentProject;
+    if (project == null || index < 0 || index >= project.layers.length) return;
+    final layer = project.layers[index];
+    if (layer.maskStrokes == null) return;
+    layer.maskEnabled = !layer.maskEnabled;
+    layer.maskVersion++;
+    _markChanged();
+  }
+
+  /// Starts a new mask stroke on the current layer.
+  ///
+  /// [conceal] strokes hide content (black paint); reveal strokes restore it.
+  void beginMaskStroke(
+    Offset point, {
+    required double width,
+    required double opacity,
+    required bool conceal,
+  }) {
+    final layer = _currentProject?.currentLayer;
+    if (layer == null || layer.locked) return;
+    layer.maskStrokes ??= [];
+    layer.maskStrokes!.add(MaskStroke(
+      id: _uuid.v4(),
+      points: [point],
+      width: width,
+      opacity: opacity,
+      erase: conceal,
+    ));
+    layer.maskVersion++;
+    notifyListeners();
+  }
+
+  /// Appends a point to the in-progress mask stroke without notifying
+  /// listeners (the canvas repaints itself during a stroke).
+  void extendMaskStrokeSilent(Offset point) {
+    final layer = _currentProject?.currentLayer;
+    final strokes = layer?.maskStrokes;
+    if (strokes == null || strokes.isEmpty) return;
+    final stroke = strokes.last;
+    stroke.points.add(point);
+    stroke.contentVersion++;
+    layer!.maskVersion++;
+    touchContent();
+  }
+
+  /// Finishes the in-progress mask stroke (marks the project dirty).
+  void endMaskStroke() {
+    if (_currentProject?.currentLayer?.maskStrokes == null) return;
+    _markChanged();
+  }
+
 
   /// Creates a group containing the current layer (if any).
   ///

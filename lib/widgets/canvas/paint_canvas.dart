@@ -26,6 +26,8 @@ class PaintCanvas extends StatefulWidget {
 
 class _PaintCanvasState extends State<PaintCanvas> {
   Drawable? _currentDrawable;
+  /// True while a mask stroke (not a drawable) is being painted.
+  bool _currentMaskStrokeActive = false;
   Offset? _gradientStart;
   DateTime? _lastMultiTouchTime;
   int _lastTouchCount = 0;
@@ -1525,6 +1527,23 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
     if (tp.currentTool == ToolType.brush || tp.currentTool == ToolType.eraser) {
       if (!_isOnCanvas(canvasPos)) return;
+      // Mask editing: strokes paint into the current layer's mask instead of
+      // its content. Dark colors conceal, light colors reveal (grayscale
+      // mask semantics); the eraser always reveals.
+      if (pp.maskEditing) {
+        pp.saveSnapshot();
+        final conceal = tp.currentTool == ToolType.brush &&
+            tp.primaryColor.computeLuminance() < 0.5;
+        pp.beginMaskStroke(
+          canvasPos,
+          width: tp.brushSize,
+          opacity: tp.brushOpacity,
+          conceal: conceal,
+        );
+        _currentMaskStrokeActive = true;
+        _dragConfirmed = true;
+        return;
+      }
       pp.saveSnapshot();
       _stabilizerQueue.clear();
       // Seed velocity tracking from the pen-down event (not the drag-start
@@ -1576,6 +1595,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final tp = context.read<ToolProvider>();
     final pp = context.read<ProjectProvider>();
     final canvasPos = _toCanvas(pos, areaSize);
+
+    // Mask stroke in progress: just append the point; the layer mask
+    // re-renders through the normal content-version bump.
+    if (_currentMaskStrokeActive) {
+      if (_isOnCanvas(canvasPos)) {
+        pp.extendMaskStrokeSilent(canvasPos);
+      }
+      return;
+    }
 
     // Move tool: selection editing > VP handles > drawable editing.
     if (tp.currentTool == ToolType.move) {
@@ -1879,6 +1907,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
   }
 
   void _onPointerUp() {
+    if (_currentMaskStrokeActive) {
+      _currentMaskStrokeActive = false;
+      context.read<ProjectProvider>().endMaskStroke();
+    }
     _stabilizerQueue.clear();
     _lastPointerTime = null;
     _lastPointerPos = null;
@@ -2283,6 +2315,8 @@ int layerContentVersion(Layer layer) => Object.hashAll([
       for (final d in layer.drawables) d.contentVersion,
       identityHashCode(layer.image),
       layer.imageVersion,
+      layer.maskVersion,
+      layer.maskEnabled,
     ]);
 
 /// Screen-space geometry of the curve tool's ✓/✗ buttons, anchored to the
@@ -2413,12 +2447,27 @@ class _CanvasPainter extends CustomPainter {
       final drawingHere = currentDrawable != null &&
           layer.drawables.contains(currentDrawable);
       final entry = layerRasters[layer.id];
+      final mask = (layer.maskEnabled && layer.maskStrokes != null &&
+              layer.maskStrokes!.isNotEmpty)
+          ? layer.maskStrokes
+          : null;
       if (entry != null && !drawingHere && entry.version == layerContentVersion(layer)) {
         // Fast path: blit the cached layer texture with its blend mode.
-        canvas.drawImage(entry.image, Offset.zero,
+        void blit() => canvas.drawImage(entry.image, Offset.zero,
             Paint()
               ..color = Colors.white.withValues(alpha: layer.opacity)
               ..blendMode = layer.blendMode.toFlutterBlendMode());
+        if (mask != null) {
+          canvas.saveLayer(docRect, Paint());
+          blit();
+          canvas.saveLayer(docRect, Paint()..blendMode = BlendMode.dstIn);
+          canvas.drawRect(docRect, Paint()..color = Colors.white);
+          for (final s in mask) { s.drawOnMask(canvas); }
+          canvas.restore();
+          canvas.restore();
+        } else {
+          blit();
+        }
         for (final d in layer.drawables) {
           if (d.selected) _drawSelectionHandles(canvas, d);
         }
@@ -2448,6 +2497,16 @@ class _CanvasPainter extends CustomPainter {
       }
       for (final d in layer.drawables) {
         d.draw(canvas, Paint());
+      }
+      // Apply the transparency mask inside the isolated layer: dstIn keeps
+      // the content only where the mask buffer is opaque.
+      if (mask != null) {
+        canvas.saveLayer(docRect, Paint()..blendMode = BlendMode.dstIn);
+        canvas.drawRect(docRect, Paint()..color = Colors.white);
+        for (final s in mask) {
+          s.drawOnMask(canvas);
+        }
+        canvas.restore();
       }
       canvas.restore();
       for (final d in layer.drawables) {

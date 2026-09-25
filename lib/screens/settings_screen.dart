@@ -474,6 +474,11 @@ class _AboutContent extends StatelessWidget {
           _infoCard(context, 'settings.version'.tr(), ConfigService.buildVersion),
           _infoCard(context, 'settings.build'.tr(), ConfigService.buildNumber),
           const SizedBox(height: 24),
+          Text('settings.inspired_by'.tr(), style: TextStyle(
+            fontSize: 12,
+            color: theme.colorScheme.onSurfaceVariant,
+          )),
+          const SizedBox(height: 8),
           Text('settings.copyright'.tr(), style: TextStyle(
             fontSize: 12,
             color: theme.colorScheme.onSurfaceVariant,

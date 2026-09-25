@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/painting.dart';
 import 'drawable.dart';
+import 'mask_stroke.dart';
 
 /// Layer blend modes, grouped by visual family.
 ///
@@ -223,6 +224,15 @@ class Layer {
   /// Members of one group are contiguous in [Project.layers].
   String? groupId;
 
+  /// Transparency mask strokes; null means "no mask". White keeps, black
+  /// conceals. [maskEnabled] temporarily disables the mask without deleting
+  /// its strokes.
+  List<MaskStroke>? maskStrokes;
+  bool maskEnabled;
+
+  /// Bumped whenever mask strokes change, so raster caches rebuild.
+  int maskVersion = 0;
+
   /// Bumped whenever the image transform (offset/rotation/scale/flip)
   /// changes, so the painter's raster cache knows to re-render this layer.
   int imageVersion = 0;
@@ -243,6 +253,8 @@ class Layer {
     this.imageFlipV = false,
     this.thumbnailPath,
     this.groupId,
+    this.maskStrokes,
+    this.maskEnabled = true,
     List<Drawable>? drawables,
   }) : drawables = drawables ?? [];
 
@@ -262,6 +274,8 @@ class Layer {
     bool? imageFlipV,
     String? thumbnailPath,
     String? groupId,
+    List<MaskStroke>? maskStrokes,
+    bool? maskEnabled,
     List<Drawable>? drawables,
   }) =>
       Layer(
@@ -280,6 +294,8 @@ class Layer {
         imageFlipV: imageFlipV ?? this.imageFlipV,
         thumbnailPath: thumbnailPath ?? this.thumbnailPath,
         groupId: groupId ?? this.groupId,
+        maskStrokes: maskStrokes ?? this.maskStrokes,
+        maskEnabled: maskEnabled ?? this.maskEnabled,
         drawables: drawables ?? this.drawables,
       );
 
@@ -298,6 +314,8 @@ class Layer {
         'imageFlipV': imageFlipV,
         'thumbnailPath': thumbnailPath,
         'groupId': groupId,
+        'maskEnabled': maskEnabled,
+        'maskStrokes': maskStrokes?.map((s) => s.toJson()).toList(),
         'drawables': drawables.map((d) => d.toJson()).toList(),
       };
 
@@ -321,6 +339,10 @@ class Layer {
         imageFlipV: json['imageFlipV'] as bool? ?? false,
         thumbnailPath: json['thumbnailPath'] as String?,
         groupId: json['groupId'] as String?,
+        maskEnabled: json['maskEnabled'] as bool? ?? true,
+        maskStrokes: (json['maskStrokes'] as List?)
+            ?.map((s) => MaskStroke.fromJson(s as Map<String, dynamic>))
+            .toList(),
         drawables: (json['drawables'] as List?)
                 ?.map(
                     (d) => Drawable.fromJson(d as Map<String, dynamic>))

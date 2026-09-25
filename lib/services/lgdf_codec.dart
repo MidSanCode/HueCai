@@ -10,6 +10,7 @@ import 'package:flutter/painting.dart';
 import '../models/canvas_settings.dart';
 import '../models/drawable.dart';
 import '../models/layer.dart';
+import '../models/mask_stroke.dart';
 import '../models/project.dart';
 import 'history_service.dart';
 
@@ -209,6 +210,8 @@ class LgdfCodec {
         'locked': layer.locked,
         'blend_mode': layer.blendMode.jsonName,
         'group_id': layer.groupId,
+        'mask_enabled': layer.maskEnabled,
+        'mask_strokes': layer.maskStrokes?.map((s) => s.toJson()).toList(),
         'image_path': layer.imagePath,
         'image_offset': {'x': layer.imageOffset.dx, 'y': layer.imageOffset.dy},
         'image_rotation': layer.imageRotation,
@@ -229,6 +232,10 @@ class LgdfCodec {
       locked: json['locked'] as bool? ?? false,
       blendMode: BlendModeExt.fromJsonName(json['blend_mode'] as String?),
       groupId: json['group_id'] as String?,
+      maskEnabled: json['mask_enabled'] as bool? ?? true,
+      maskStrokes: (json['mask_strokes'] as List?)
+          ?.map((s) => MaskStroke.fromJson(s as Map<String, dynamic>))
+          .toList(),
       imagePath: json['image_path'] as String?,
       imageOffset: offset == null
           ? Offset.zero

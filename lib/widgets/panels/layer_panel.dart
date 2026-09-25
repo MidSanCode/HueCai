@@ -254,7 +254,7 @@ class _LayerItemState extends State<_LayerItem> {
                   ],
                 ),
                 // Quick actions for the current non-background layer:
-                // clear / duplicate / delete + inline opacity slider.
+                // clear / duplicate / delete / mask + inline opacity slider.
                 if (widget.isCurrent && !widget.isBackground)
                   Row(
                     children: [
@@ -276,6 +276,7 @@ class _LayerItemState extends State<_LayerItem> {
                         'layer.delete'.tr(),
                         widget.onDelete,
                       ),
+                      _maskAction(context, pp),
                       Expanded(
                         child: SizedBox(
                           height: 26,
@@ -323,6 +324,85 @@ class _LayerItemState extends State<_LayerItem> {
         ),
       ),
     );
+  }
+
+  /// Mask quick action: no mask → add one; mask exists → toggle mask editing;
+  /// secondary tap → mask menu (enable/disable/remove).
+  Widget _maskAction(BuildContext context, ProjectProvider pp) {
+    final theme = Theme.of(context);
+    final hasMask = widget.layer.maskStrokes != null;
+    final editing = pp.maskEditing && widget.isCurrent;
+    final disabled = hasMask && !widget.layer.maskEnabled;
+    return Tooltip(
+      message: hasMask
+          ? (editing ? 'layer.mask_editing'.tr() : 'layer.mask_edit'.tr())
+          : 'layer.mask_add'.tr(),
+      child: GestureDetector(
+        onSecondaryTap: hasMask ? () => _showMaskMenu(context, pp) : null,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            if (!hasMask) {
+              pp.addLayerMask(widget.index);
+            } else {
+              pp.setMaskEditing(!editing);
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(3),
+            child: Icon(
+              hasMask ? Icons.masks : Icons.masks_outlined,
+              size: 15,
+              color: editing
+                  ? theme.colorScheme.primary
+                  : disabled
+                      ? theme.colorScheme.outline
+                      : theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showMaskMenu(BuildContext context, ProjectProvider pp) {
+    final pos = _tapPosition ?? const Offset(100, 100);
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
+      items: [
+        PopupMenuItem(
+          value: 'toggle',
+          child: ListTile(
+            leading: Icon(
+              widget.layer.maskEnabled
+                  ? Icons.visibility_off
+                  : Icons.visibility,
+              size: 18,
+            ),
+            title: Text(widget.layer.maskEnabled
+                ? 'layer.mask_disable'.tr()
+                : 'layer.mask_enable'.tr()),
+            dense: true,
+          ),
+        ),
+        PopupMenuItem(
+          value: 'remove',
+          child: ListTile(
+            leading: const Icon(Icons.delete_outline, size: 18),
+            title: Text('layer.mask_remove'.tr()),
+            dense: true,
+          ),
+        ),
+      ],
+    ).then((value) {
+      switch (value) {
+        case 'toggle':
+          pp.toggleLayerMaskEnabled(widget.index);
+        case 'remove':
+          pp.removeLayerMask(widget.index);
+      }
+    });
   }
 
   void _showContextMenu(BuildContext context) {

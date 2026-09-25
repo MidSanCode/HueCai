@@ -386,6 +386,26 @@ class ProjectService {
           );
           canvas.restore();
         }
+        // Apply the transparency mask inside the isolated layer, before the
+        // blend-mode composite closes.
+        final mask = (layer.maskEnabled && layer.maskStrokes != null &&
+                layer.maskStrokes!.isNotEmpty)
+            ? layer.maskStrokes!
+            : null;
+        if (mask != null) {
+          canvas.saveLayer(
+            Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+            Paint()..blendMode = BlendMode.dstIn,
+          );
+          canvas.drawRect(
+            Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+            Paint()..color = Colors.white,
+          );
+          for (final s in mask) {
+            s.drawOnMask(canvas);
+          }
+          canvas.restore();
+        }
         canvas.restore();
       }
 
