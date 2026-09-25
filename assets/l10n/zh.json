@@ -258,6 +258,7 @@
   "stabilizer.mode_smooth": "平滑",
   "stabilizer.mode_string": "拉线",
   "brush.pressure_curve": "压感曲线",
+  "menu.file.export_ora": "导出 ORA",
   "layers.add": "新建图层",
   "unsaved.title": "未保存的更改",
   "unsaved.body": "是否保存对项目的更改？",

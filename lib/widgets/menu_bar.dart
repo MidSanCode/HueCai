@@ -61,6 +61,9 @@ class _FullMenuBar extends StatelessWidget {
             _MenuItem('menu.file.export'.tr(), Icons.image, () {
               _showExportDialog(context);
             }),
+            _MenuItem('menu.file.export_ora'.tr(), Icons.layers, () {
+              context.read<ProjectProvider>().exportOra();
+            }),
           ]),
           _MenuButton(label: 'menu.edit'.tr(), children: [
             _MenuItem('menu.edit.undo'.tr(), Icons.undo, () {

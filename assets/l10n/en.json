@@ -258,6 +258,7 @@
   "stabilizer.mode_smooth": "Smooth",
   "stabilizer.mode_string": "String Pull",
   "brush.pressure_curve": "Pressure Curve",
+  "menu.file.export_ora": "Export ORA",
   "layers.add": "New Layer",
   "unsaved.title": "Unsaved Changes",
   "unsaved.body": "Do you want to save changes to the project?",

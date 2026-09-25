@@ -13,6 +13,8 @@ import '../models/drawable.dart';
 import '../models/canvas_settings.dart';
 import 'history_service.dart';
 import 'lgdf_codec.dart';
+import 'ora_codec.dart';
+import 'psd_codec.dart';
 
 class ProjectService {
   /// Extension for hue_cai projects (LGDF container).
@@ -26,6 +28,8 @@ class ProjectService {
   static const List<String> readableExtensions = [
     LgdfCodec.extension,
     legacyExtension,
+    OraCodec.extension,
+    PsdCodec.extension,
   ];
 
   /// Extensions accepted by the open dialog, without the leading dot.
@@ -36,7 +40,9 @@ class ProjectService {
   static bool isProjectPath(String path) {
     final lower = path.toLowerCase();
     return lower.endsWith(LgdfCodec.extension) ||
-        lower.endsWith(legacyExtension);
+        lower.endsWith(legacyExtension) ||
+        lower.endsWith(OraCodec.extension) ||
+        lower.endsWith(PsdCodec.extension);
   }
 
   Future<String> get _projectsDir async {
@@ -234,12 +240,19 @@ class ProjectService {
   /// directory mode. Legacy `.hcp` archives are still parsed so existing
   /// projects can be opened and re-saved into the new format.
   Future<Project?> loadProject(String filePath) async {
-    if (filePath.toLowerCase().endsWith(LgdfCodec.directorySuffix) &&
+    final lower = filePath.toLowerCase();
+    if (lower.endsWith(LgdfCodec.directorySuffix) &&
         await Directory(filePath).exists()) {
       return LgdfCodec.readDirectory(filePath);
     }
-    if (filePath.toLowerCase().endsWith(LgdfCodec.extension)) {
+    if (lower.endsWith(LgdfCodec.extension)) {
       return LgdfCodec.readPackage(filePath);
+    }
+    if (lower.endsWith(OraCodec.extension)) {
+      return OraCodec.readPackage(filePath);
+    }
+    if (lower.endsWith(PsdCodec.extension)) {
+      return PsdCodec.readProject(filePath);
     }
     return _loadLegacyProject(filePath);
   }

@@ -12,6 +12,7 @@ import '../models/drawable.dart';
 import '../models/selection_data.dart';
 import '../services/project_service.dart';
 import '../services/lgdf_codec.dart';
+import '../services/ora_codec.dart';
 import '../services/image_filters.dart';
 import '../models/mask_stroke.dart';
 import '../services/history_service.dart';
@@ -734,6 +735,28 @@ class ProjectProvider extends ChangeNotifier {
         await File(result).writeAsBytes(byteData.buffer.asUint8List());
       }
     } catch (_) {}
+  }
+
+  /// Exports the current project as an OpenRaster (.ora) package.
+  Future<bool> exportOra() async {
+    final project = _currentProject;
+    if (project == null) return false;
+    try {
+      final result = await FilePicker.platform.saveFile(
+        dialogTitle: 'menu.file.export_ora'.tr(),
+        fileName: '${project.name}${OraCodec.extension}',
+        type: FileType.any,
+      );
+      if (result == null) return false;
+      var path = result;
+      if (!path.toLowerCase().endsWith(OraCodec.extension)) {
+        path = '$path${OraCodec.extension}';
+      }
+      await OraCodec.writePackage(path, project);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> importImage(String path) async {
