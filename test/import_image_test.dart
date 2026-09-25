@@ -139,13 +139,14 @@ void main() {
       expect(layer.image!.width, 20);
       expect(layer.image!.height, 20);
 
-      // And the imported pixels must survive the .hcp round-trip.
+      // And the imported pixels must survive the save/reload round-trip.
+      // Saving always produces the new LGDF `.hcproj` container.
       final service = ProjectService();
       final tmp = await Directory.systemTemp.createTemp('huecai_save');
       final saved = await service.saveProject(
         project,
         HistoryService(),
-        filePath: '${tmp.path}/roundtrip.hcp',
+        filePath: '${tmp.path}/roundtrip.hcproj',
       );
       final reloaded = await service.loadProject(saved);
       expect(reloaded, isNotNull);

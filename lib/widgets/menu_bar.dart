@@ -6,6 +6,7 @@ import '../providers/tool_provider.dart';
 import '../providers/canvas_provider.dart';
 import '../providers/project_provider.dart';
 import '../providers/app_settings.dart';
+import '../services/project_service.dart';
 import '../models/drawable.dart';
 import '../screens/settings_screen.dart';
 import '../screens/editor_screen.dart';
@@ -638,7 +639,7 @@ void _openHcpFile(BuildContext context) async {
 
   final result = await FilePicker.platform.pickFiles(
     type: FileType.custom,
-    allowedExtensions: ['hcp'],
+    allowedExtensions: ProjectService.readableExtensionNames,
   );
   if (result == null || result.files.single.path == null) return;
 

@@ -28,5 +28,45 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>hue_cai drawing project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>cc.eu.mscstdio.huecai.hcproj</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>hcproj</string>
+				<string>hcp</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>cc.eu.mscstdio.huecai.hcproj</string>
+			<key>UTTypeDescription</key>
+			<string>hue_cai drawing project</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.pkware.zip-archive</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>hcproj</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

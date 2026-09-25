@@ -12,9 +12,32 @@ import '../models/layer.dart';
 import '../models/drawable.dart';
 import '../models/canvas_settings.dart';
 import 'history_service.dart';
+import 'lgdf_codec.dart';
 
 class ProjectService {
-  static const String _hcpExtension = '.hcp';
+  /// Extension for hue_cai projects (LGDF container).
+  static const String projectExtension = LgdfCodec.extension;
+
+  /// Legacy extension from before the LGDF migration; still readable so old
+  /// projects can be opened and re-saved into the new format.
+  static const String legacyExtension = '.hcp';
+
+  /// Every extension [loadProject] understands.
+  static const List<String> readableExtensions = [
+    LgdfCodec.extension,
+    legacyExtension,
+  ];
+
+  /// Extensions accepted by the open dialog, without the leading dot.
+  static final List<String> readableExtensionNames =
+      readableExtensions.map((e) => e.replaceFirst('.', '')).toList();
+
+  /// True when [path] is a project container this service can open.
+  static bool isProjectPath(String path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith(LgdfCodec.extension) ||
+        lower.endsWith(legacyExtension);
+  }
 
   Future<String> get _projectsDir async {
     final appDir = await getApplicationDocumentsDirectory();
@@ -35,8 +58,15 @@ class ProjectService {
     for (final entry in entries) {
       if (entry is Directory) {
         if (entry.path.endsWith('.trash')) continue;
+        // A directory-mode LGDF project is itself a `.hcproj` folder; treat
+        // it as a project instead of descending into its internals.
+        if (entry.path.toLowerCase().endsWith(LgdfCodec.directorySuffix)) {
+          final project = await LgdfCodec.readDirectory(entry.path);
+          if (project != null) projects.add(project);
+          continue;
+        }
         projects.addAll(await _listProjectsRecursive(entry));
-      } else if (entry is File && entry.path.endsWith(_hcpExtension)) {
+      } else if (entry is File && isProjectPath(entry.path)) {
         try {
           final project = await loadProject(entry.path);
           if (project != null) projects.add(project);
@@ -53,7 +83,7 @@ class ProjectService {
     if (!await trashDir.exists()) return [];
     return (await trashDir.list().toList())
         .whereType<File>()
-        .where((f) => f.path.endsWith(_hcpExtension))
+        .where((f) => isProjectPath(f.path))
         .toList();
   }
 
@@ -112,7 +142,7 @@ class ProjectService {
       final file = File(filePath);
       if (!await file.exists()) return false;
       final dir = file.parent;
-      final newPath = '${dir.path}/$newName$_hcpExtension';
+      final newPath = '${dir.path}/$newName$projectExtension';
       await file.rename(newPath);
       // Also rename thumbnail
       final thumb = File('$filePath.thumb.png');
@@ -198,7 +228,24 @@ class ProjectService {
     }
   }
 
+  /// Loads a project from disk.
+  ///
+  /// `.hcproj` files are LGDF packages; a `.hcproj` *directory* is read in
+  /// directory mode. Legacy `.hcp` archives are still parsed so existing
+  /// projects can be opened and re-saved into the new format.
   Future<Project?> loadProject(String filePath) async {
+    if (filePath.toLowerCase().endsWith(LgdfCodec.directorySuffix) &&
+        await Directory(filePath).exists()) {
+      return LgdfCodec.readDirectory(filePath);
+    }
+    if (filePath.toLowerCase().endsWith(LgdfCodec.extension)) {
+      return LgdfCodec.readPackage(filePath);
+    }
+    return _loadLegacyProject(filePath);
+  }
+
+  /// Parses the pre-LGDF `.hcp` container (project.json + layer PNGs).
+  Future<Project?> _loadLegacyProject(String filePath) async {
     try {
       final file = File(filePath);
       final bytes = await file.readAsBytes();
@@ -266,55 +313,15 @@ class ProjectService {
     HistoryService history, {
     String? filePath,
   }) async {
-    final path = filePath ?? project.filePath ?? await uniquePath('${await _projectsDir}/${project.name}$_hcpExtension');
+    final path = filePath ??
+        project.filePath ??
+        await uniquePath(
+          '${await _projectsDir}/${project.name}${LgdfCodec.extension}',
+        );
     final savePath = path;
 
-    final archive = Archive();
-
-    archive.addFile(ArchiveFile(
-      'project.json',
-      utf8.encode(jsonEncode(project.toJson())).length,
-      utf8.encode(jsonEncode(project.toJson())),
-    ));
-
-    final layerMeta = project.layers.map((l) => l.toJson()).toList();
-    archive.addFile(ArchiveFile(
-      'layer_meta.json',
-      utf8.encode(jsonEncode(layerMeta)).length,
-      utf8.encode(jsonEncode(layerMeta)),
-    ));
-
-    for (int i = 0; i < project.layers.length; i++) {
-      final layer = project.layers[i];
-      final pngBytes = await _layerToPng(layer, project.settings.width, project.settings.height);
-      if (pngBytes != null) {
-        archive.addFile(ArchiveFile(
-          'layers/layer_$i.png',
-          pngBytes.length,
-          pngBytes,
-        ));
-      }
-    }
-
-    final historyJson = jsonEncode(history.toJson());
-    archive.addFile(ArchiveFile(
-      'history.json',
-      utf8.encode(historyJson).length,
-      utf8.encode(historyJson),
-    ));
-
-    if (project.settings.iccProfileData != null) {
-      archive.addFile(ArchiveFile(
-        'icc/profile.icc',
-        project.settings.iccProfileData!.length,
-        project.settings.iccProfileData!,
-      ));
-    }
-
-    final encoded = ZipEncoder().encode(archive);
-
-    final file = File(savePath);
-    await file.writeAsBytes(encoded);
+    // Projects are written as LGDF packages (temp/example/lgdf-standard.md).
+    await LgdfCodec.writePackage(savePath, project, history);
     project.filePath = savePath;
     project.modifiedAt = DateTime.now();
 
@@ -383,61 +390,25 @@ class ProjectService {
     }
   }
 
-  Future<String> uniquePath(String basePath) async {
-    final file = File(basePath);
-    if (!await file.exists()) return basePath;
-    final dir = file.parent;
-    final name = file.uri.pathSegments.last.replaceAll('.hcp', '');
-    int counter = 1;
-    while (true) {
-      final newPath = '${dir.path}/$name($counter).hcp';
-      if (!await File(newPath).exists()) return newPath;
-      counter++;
-    }
-  }
-
-  Future<Uint8List?> _layerToPng(Layer layer, int canvasW, int canvasH) async {
-    try {
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, canvasW.toDouble(), canvasH.toDouble()));
-      // Start transparent: a layer's own PNG must not bake in an opaque white
-      // backdrop, otherwise stacking layers would hide everything beneath and
-      // the document background could never show through.
-      _drawLayerContent(canvas, layer);
-      final picture = recorder.endRecording();
-      final img = await picture.toImage(canvasW, canvasH);
-      final pngBytes = await img.toByteData(format: ui.ImageByteFormat.png);
-      return pngBytes?.buffer.asUint8List();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Paints one layer's bitmap (if any) plus its drawables onto [canvas].
+  /// Returns [basePath], or a `name(1).hcproj`-style variant when it is taken.
   ///
-  /// Shared by layer export and import so a layer carrying a decoded image
-  /// serializes exactly as it renders on screen.
-  void _drawLayerContent(Canvas canvas, Layer layer) {
-    final img = layer.image;
-    if (img != null) {
-      canvas.save();
-      canvas.translate(layer.imageOffset.dx + img.width / 2,
-          layer.imageOffset.dy + img.height / 2);
-      canvas.rotate(layer.imageRotation);
-      final flipX = layer.imageFlipH ? -1.0 : 1.0;
-      final flipY = layer.imageFlipV ? -1.0 : 1.0;
-      canvas.scale(layer.imageScale * flipX, layer.imageScale * flipY);
-      canvas.drawImageRect(
-        img,
-        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
-        Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(),
-            img.height.toDouble()),
-        Paint(),
-      );
-      canvas.restore();
-    }
-    for (final d in layer.drawables) {
-      d.draw(canvas, Paint());
+  /// Splits on the *last* dot so the original extension is preserved rather
+  /// than the legacy `.hcp` suffix being hardcoded.
+  Future<String> uniquePath(String basePath) async {
+    if (!await File(basePath).exists()) return basePath;
+
+    final file = File(basePath);
+    final dir = file.parent;
+    final fileName = file.uri.pathSegments.last;
+    final dot = fileName.lastIndexOf('.');
+    final stem = dot > 0 ? fileName.substring(0, dot) : fileName;
+    final ext = dot > 0 ? fileName.substring(dot) : '';
+
+    var counter = 1;
+    while (true) {
+      final candidate = '${dir.path}/$stem($counter)$ext';
+      if (!await File(candidate).exists()) return candidate;
+      counter++;
     }
   }
 

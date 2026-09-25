@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/project.dart';
 import '../services/cloud_config_store.dart';
+import '../services/lgdf_codec.dart';
 import '../services/webdav_service.dart';
 
 /// Outcome of a cloud sync conflict resolution choice.
@@ -116,9 +117,9 @@ class CloudSyncProvider with ChangeNotifier {
     return sub.isEmpty ? '$trimmed/' : '$trimmed/$sub/';
   }
 
-  /// Relative key of a project's remote file: `projects/<id>/<name>.hcp`.
+  /// Relative key of a project's remote file: `projects/<id>/<name>.hcproj`.
   String _remoteKeyFor(Project project) =>
-      'projects/${project.id}/${_sanitize(project.name)}.hcp';
+      'projects/${project.id}/${_sanitize(project.name)}${LgdfCodec.extension}';
 
   /// Strips characters that are unsafe in a remote path segment.
   String _sanitize(String name) {
@@ -349,7 +350,8 @@ class CloudSyncProvider with ChangeNotifier {
             // remote version down, so nothing is lost.
             final stamp = DateTime.now().millisecondsSinceEpoch;
             final copyKey =
-                'projects/${project.id}/${_sanitize(project.name)}_conflict_$stamp.hcp';
+                'projects/${project.id}/${_sanitize(project.name)}_conflict_$stamp'
+                '${LgdfCodec.extension}';
             await _upload(localFile, copyKey);
             await _download(remoteKey, localFile);
             return _finish(project.id, SyncOutcome.conflictResolved);

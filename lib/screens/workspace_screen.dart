@@ -15,6 +15,7 @@ import '../widgets/cloud_setup_dialog.dart';
 import '../models/canvas_settings.dart';
 import '../models/drawable.dart';
 import '../services/project_service.dart';
+import '../services/launch_file_service.dart';
 import 'new_project_dialog.dart';
 import 'editor_screen.dart';
 
@@ -54,18 +55,30 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ProjectProvider>().loadRecentProjects();
+      _openLaunchFile();
     });
+  }
+
+  /// Opens the project passed by the OS when it launched us as the
+  /// `.hcproj` handler (double-click / "open with").
+  void _openLaunchFile() {
+    final path = LaunchFileService.consume();
+    if (path == null || !mounted) return;
+    _openAndNavigate(context, context.read<ProjectProvider>(), path);
   }
 
   void _openProject(BuildContext context) async {
     final pp = context.read<ProjectProvider>();
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['hcp', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
+      allowedExtensions: [
+        ...ProjectService.readableExtensionNames,
+        'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp',
+      ],
     );
     if (result != null && result.files.single.path != null) {
       final path = result.files.single.path!;
-      if (path.endsWith('.hcp')) {
+      if (ProjectService.isProjectPath(path)) {
         await pp.openProject(path);
       } else {
         await pp.importImage(path);

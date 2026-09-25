@@ -11,6 +11,7 @@ import '../models/layer.dart';
 import '../models/drawable.dart';
 import '../models/selection_data.dart';
 import '../services/project_service.dart';
+import '../services/lgdf_codec.dart';
 import '../services/history_service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
@@ -70,7 +71,8 @@ class ProjectProvider extends ChangeNotifier {
       final dir = await getTemporaryDirectory();
       final backupDir = Directory('${dir.path}/huecai_backups');
       if (!await backupDir.exists()) await backupDir.create();
-      final backupPath = '${backupDir.path}/${_currentProject!.id}_backup.hcp';
+      final backupPath =
+          '${backupDir.path}/${_currentProject!.id}_backup${LgdfCodec.extension}';
       await _projectService.saveProject(_currentProject!, _historyService,
           filePath: backupPath);
     } catch (_) {}
@@ -78,7 +80,8 @@ class ProjectProvider extends ChangeNotifier {
 
   Future<String?> getBackupPath() async {
     final dir = await getTemporaryDirectory();
-    final backupPath = '${dir.path}/huecai_backups/${_currentProject!.id}_backup.hcp';
+    final backupPath =
+        '${dir.path}/huecai_backups/${_currentProject!.id}_backup${LgdfCodec.extension}';
     final file = File(backupPath);
     if (await file.exists()) return backupPath;
     return null;
@@ -350,7 +353,8 @@ class ProjectProvider extends ChangeNotifier {
     final dir = await getApplicationDocumentsDirectory();
     final saveDir = Directory('${dir.path}/huecai_projects');
     if (!await saveDir.exists()) await saveDir.create(recursive: true);
-    final basePath = '${saveDir.path}/${_currentProject!.name}.hcp';
+    final basePath =
+        '${saveDir.path}/${_currentProject!.name}${LgdfCodec.extension}';
     final path = await _projectService.uniquePath(basePath);
     await _projectService.saveProject(_currentProject!, _historyService, filePath: path);
     _hasUnsavedChanges = false;
@@ -440,7 +444,7 @@ class ProjectProvider extends ChangeNotifier {
       // layer (which is the locked white background), so the imported image
       // was never actually drawn and the canvas came up blank. The decoded
       // bitmap is held on the layer via `image`, which the painter, the
-      // thumbnail generator and the .hcp writer all already understand.
+      // thumbnail generator and the LGDF project writer all already understand.
       final layer = Layer(
         id: _uuid.v4(),
         name: name,
