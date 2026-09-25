@@ -4,7 +4,10 @@ import 'package:provider/provider.dart';
 import '../../providers/project_provider.dart';
 import '../../models/layer.dart';
 import '../../models/project.dart';
+import '../../services/filter_registry.dart';
+import '../../services/image_filters.dart';
 import '../dialogs/filter_dialog.dart';
+import '../dialogs/generic_filter_dialog.dart';
 
 Widget _buildLayerItem(
   BuildContext ctx,
@@ -518,33 +521,37 @@ class _LayerItemState extends State<_LayerItem> {
     });
   }
 
-  /// Picks a filter kind, opens its parameter dialog, then creates the
-  /// adjustment layer above this one.
+  /// Picks any registered filter, opens its parameter dialog, then creates
+  /// the adjustment layer above this one.
   Future<void> _addAdjustmentLayer(BuildContext context) async {
     final pp = context.read<ProjectProvider>();
-    final kind = await showDialog<FilterKind>(
+    final def = await showDialog<FilterDef>(
       context: context,
       builder: (ctx) => SimpleDialog(
         title: Text('layer.add_adjustment'.tr()),
         children: [
-          for (final k in FilterKind.values)
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(ctx).pop(k),
-              child: Text(switch (k) {
-                FilterKind.gaussianBlur => 'filter.gaussian_blur'.tr(),
-                FilterKind.unsharpMask => 'filter.unsharp_mask'.tr(),
-                FilterKind.levels => 'filter.levels'.tr(),
-                FilterKind.curves => 'filter.curves'.tr(),
-                FilterKind.hueSaturation => 'filter.hue_saturation'.tr(),
-              }),
+          for (final group in FilterRegistry.groupKeys) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 2),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(group.tr(),
+                    style: Theme.of(ctx).textTheme.labelSmall),
+              ),
             ),
+            for (final d in FilterRegistry.inGroup(group))
+              SimpleDialogOption(
+                onPressed: () => Navigator.of(ctx).pop(d),
+                child: Text(d.labelKey.tr()),
+              ),
+          ],
         ],
       ),
     );
-    if (kind == null || !context.mounted) return;
-    final spec = await pickFilterSpec(context, kind);
-    if (spec == null) return;
-    pp.addAdjustmentLayer(widget.index, spec);
+    if (def == null || !context.mounted) return;
+    final params = await pickFilterParams(context, def);
+    if (params == null) return;
+    pp.addAdjustmentLayer(widget.index, AdjustmentSpec(def.kind, params));
   }
 
   /// Reopens the parameter dialog for an existing adjustment layer.
@@ -552,22 +559,12 @@ class _LayerItemState extends State<_LayerItem> {
     final pp = context.read<ProjectProvider>();
     final current = widget.layer.adjustment;
     if (current == null) return;
-    final kind = FilterKind.values.firstWhere(
-      (k) => _kindNameOf(k) == current.kind,
-      orElse: () => FilterKind.gaussianBlur,
-    );
-    final spec = await pickFilterSpec(context, kind);
-    if (spec == null) return;
-    pp.updateAdjustmentLayer(widget.index, spec);
+    final def = FilterRegistry.byKind(current.kind);
+    if (def == null) return;
+    final params = await pickFilterParams(context, def, initial: current.params);
+    if (params == null) return;
+    pp.updateAdjustmentLayer(widget.index, AdjustmentSpec(def.kind, params));
   }
-
-  static String _kindNameOf(FilterKind kind) => switch (kind) {
-        FilterKind.gaussianBlur => 'gaussianBlur',
-        FilterKind.unsharpMask => 'unsharpMask',
-        FilterKind.levels => 'levels',
-        FilterKind.curves => 'curves',
-        FilterKind.hueSaturation => 'hueSaturation',
-      };
 
   void _showBlendModeMenu(BuildContext context) {
     final pp = context.read<ProjectProvider>();

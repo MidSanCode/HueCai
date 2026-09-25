@@ -14,6 +14,7 @@ import '../services/project_service.dart';
 import '../services/lgdf_codec.dart';
 import '../services/ora_codec.dart';
 import '../services/image_filters.dart';
+import '../services/filter_registry.dart';
 import '../models/mask_stroke.dart';
 import '../services/history_service.dart';
 import 'package:path_provider/path_provider.dart';
@@ -388,14 +389,11 @@ class ProjectProvider extends ChangeNotifier {
     _markChanged();
   }
 
-  static String _adjustmentName(AdjustmentSpec spec) => switch (spec.kind) {
-        'gaussianBlur' => 'filter.gaussian_blur'.tr(),
-        'unsharpMask' => 'filter.unsharp_mask'.tr(),
-        'levels' => 'filter.levels'.tr(),
-        'curves' => 'filter.curves'.tr(),
-        'hueSaturation' => 'filter.hue_saturation'.tr(),
-        _ => spec.kind,
-      };
+  static String _adjustmentName(AdjustmentSpec spec) {
+    final def = FilterRegistry.byKind(spec.kind);
+    if (def != null) return def.labelKey.tr();
+    return spec.kind;
+  }
 
   /// Updates an adjustment layer's filter parameters.
   void updateAdjustmentLayer(int index, AdjustmentSpec spec) {

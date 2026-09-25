@@ -9,6 +9,8 @@ import '../providers/app_settings.dart';
 import '../services/project_service.dart';
 import '../services/stroke_stabilizer.dart';
 import '../services/assist_ruler.dart';
+import '../services/filter_registry.dart';
+import '../widgets/dialogs/generic_filter_dialog.dart';
 import '../models/drawable.dart';
 import '../screens/settings_screen.dart';
 import '../screens/editor_screen.dart';
@@ -134,6 +136,9 @@ class _FullMenuBar extends StatelessWidget {
                 () => showFilterDialog(context, FilterKind.curves)),
             _MenuItem('filter.hue_saturation'.tr(), Icons.palette,
                 () => showFilterDialog(context, FilterKind.hueSaturation)),
+            const _MenuDivider(),
+            _MenuItem('filter.browser'.tr(), Icons.auto_awesome,
+                () => showFilterBrowser(context)),
           ]),
           _MenuButton(label: 'menu.layer'.tr(), children: [
             _MenuItem('menu.layer.new'.tr(), Icons.layers, () {
