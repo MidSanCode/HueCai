@@ -3,6 +3,8 @@ import '../models/brush.dart';
 import '../models/drawable.dart';
 import '../services/brush_texture.dart';
 import '../services/assist_ruler.dart';
+import '../services/palette_service.dart';
+import '../services/gamut.dart';
 
 enum ToolType {
   move,
@@ -41,6 +43,12 @@ class ToolProvider extends ChangeNotifier {
   String _textFontFamily = 'Microsoft YaHei';
   final List<Color> _memoryColors = List.filled(20, Colors.transparent);
 
+  // Palette + soft proofing
+  Palette? _palette;
+  bool _gamutWarningEnabled = false;
+  PrintProfile _printProfile = PrintProfile.coated;
+  Color? _softProofColor;
+
   ToolType get currentTool => _currentTool;
   ShapeType get currentShape => _currentShape;
   Color get primaryColor => _primaryColor;
@@ -56,6 +64,62 @@ class ToolProvider extends ChangeNotifier {
   bool get perspectiveGuideEnabled => _perspectiveGuideEnabled;
   List<AssistRuler> get rulers => List.unmodifiable(_rulers);
   bool get rulerSnapEnabled => _rulerSnapEnabled;
+
+  Palette? get palette => _palette;
+  bool get gamutWarningEnabled => _gamutWarningEnabled;
+  PrintProfile get printProfile => _printProfile;
+
+  /// Soft-proofed preview of the primary color (null when disabled).
+  Color? get softProofColor => _softProofColor;
+
+  /// True when the active color cannot be reproduced by the print profile.
+  bool get primaryOutOfGamut => _gamutWarningEnabled &&
+      Gamut.isOutOfGamut(_primaryColor, _printProfile);
+
+  void setPalette(Palette? palette) {
+    _palette = palette;
+    notifyListeners();
+  }
+
+  void addPaletteColor(Color color) {
+    final p = _palette ??= Palette(name: 'Custom');
+    if (!p.colors.contains(color)) {
+      p.colors.add(color);
+      notifyListeners();
+    }
+  }
+
+  void removePaletteColor(int index) {
+    final p = _palette;
+    if (p == null || index < 0 || index >= p.colors.length) return;
+    p.colors.removeAt(index);
+    notifyListeners();
+  }
+
+  void toggleGamutWarning() {
+    _gamutWarningEnabled = !_gamutWarningEnabled;
+    _refreshSoftProof();
+    notifyListeners();
+  }
+
+  void setPrintProfile(PrintProfile profile) {
+    _printProfile = profile;
+    _refreshSoftProof();
+    notifyListeners();
+  }
+
+  /// Soft-proof preview toggle for the canvas (independent of the warning).
+  void setSoftProofEnabled(bool enabled) {
+    _gamutWarningEnabled = enabled;
+    _refreshSoftProof();
+    notifyListeners();
+  }
+
+  void _refreshSoftProof() {
+    _softProofColor = _gamutWarningEnabled
+        ? Gamut.softProof(_primaryColor, _printProfile)
+        : null;
+  }
 
   void addRuler(RulerType type, Offset center) {
     _rulers.add(AssistRuler(
@@ -172,6 +236,7 @@ class ToolProvider extends ChangeNotifier {
 
   void setPrimaryColor(Color color) {
     _primaryColor = color;
+    _refreshSoftProof();
     notifyListeners();
   }
 
