@@ -12,6 +12,7 @@ import '../../providers/tool_provider.dart';
 import '../../providers/canvas_provider.dart';
 import '../../providers/project_provider.dart';
 import '../../providers/app_settings.dart';
+import '../../services/stroke_stabilizer.dart';
 import '../../utils/logger.dart';
 import '../dialogs/text_input_dialog.dart';
 
@@ -46,6 +47,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
   // Stabilizer smoothing
   final List<Offset> _stabilizerQueue = [];
+  final StringPullStabilizer _stringPull = StringPullStabilizer();
 
   // Velocity tracking for dynamic brush width
   DateTime? _lastPointerTime;
@@ -1431,6 +1433,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       if (!_isOnCanvas(canvasPos)) return;
       pp.saveSnapshot();
       _stabilizerQueue.clear();
+      _stringPull.startAt(canvasPos);
       // Seed velocity tracking from the pen-down event (not the drag-start
       // moment) so the very first width sample of a short, quick stroke
       // already carries the real speed of the gesture.
@@ -1800,7 +1803,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
       // Pressure-based width (if supported)
       if (as.pressureWidthEnabled && as.hasPressure && _currentPressure > 0) {
-        final pressureRatio = (_currentPressure).clamp(0.0, 1.0);
+        final pressureRatio = as.mapPressure(_currentPressure);
         final range = as.pressureMaxScale - as.pressureMinScale;
         final scale = as.pressureMinScale + pressureRatio * range;
         widthFromPressure = tp.brushSize * scale;
@@ -1841,23 +1844,34 @@ class _PaintCanvasState extends State<PaintCanvas> {
         firstWidths[0] = currentWidth;
       }
 
-      final stabilizerLevel = context.read<AppSettings>().stabilizer.round();
+      final settings = context.read<AppSettings>();
+      final stabilizerLevel = settings.stabilizer.round();
       Offset drawPos;
-      if (stabilizerLevel > 0) {
-        _stabilizerQueue.add(canvasPos);
-        while (_stabilizerQueue.length > stabilizerLevel) {
-          _stabilizerQueue.removeAt(0);
-        }
-        if (_stabilizerQueue.length >= 2) {
-          drawPos = Offset(
-            _stabilizerQueue.map((p) => p.dx).reduce((a, b) => a + b) / _stabilizerQueue.length,
-            _stabilizerQueue.map((p) => p.dy).reduce((a, b) => a + b) / _stabilizerQueue.length,
-          );
-        } else {
+      switch (settings.stabilizerMode) {
+        case StabilizerMode.stringPull:
+          // String-pull: the brush trails the pointer at a fixed distance,
+          // producing smooth curves with a deliberate, constant lag.
+          _stringPull.length = stabilizerLevel * 2.0;
+          drawPos = _stringPull.feed(canvasPos);
+        case StabilizerMode.smooth:
+          if (stabilizerLevel > 0) {
+            _stabilizerQueue.add(canvasPos);
+            while (_stabilizerQueue.length > stabilizerLevel) {
+              _stabilizerQueue.removeAt(0);
+            }
+            if (_stabilizerQueue.length >= 2) {
+              drawPos = Offset(
+                _stabilizerQueue.map((p) => p.dx).reduce((a, b) => a + b) / _stabilizerQueue.length,
+                _stabilizerQueue.map((p) => p.dy).reduce((a, b) => a + b) / _stabilizerQueue.length,
+              );
+            } else {
+              drawPos = canvasPos;
+            }
+          } else {
+            drawPos = canvasPos;
+          }
+        case StabilizerMode.off:
           drawPos = canvasPos;
-        }
-      } else {
-        drawPos = canvasPos;
       }
     final usesInk = (tp.currentTool == ToolType.brush ||
             tp.currentTool == ToolType.eraser) &&

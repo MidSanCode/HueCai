@@ -3,6 +3,8 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
 import '../../providers/tool_provider.dart';
 import '../../providers/app_settings.dart';
+import '../../services/stroke_stabilizer.dart';
+import '../common/curve_editor.dart';
 import '../../models/brush.dart';
 
 class BrushEditorDialog extends StatefulWidget {
@@ -120,6 +122,24 @@ class _BrushEditorDialogState extends State<BrushEditorDialog> {
                 _slider('brush.pressure_min'.tr(), as.pressureMinScale, 0.1, 1.0, as.setPressureMinScale, '${(as.pressureMinScale * 100).round()}%'),
                 _slider('brush.pressure_max'.tr(), as.pressureMaxScale, 0.1, 1.0, as.setPressureMaxScale, '${(as.pressureMaxScale * 100).round()}%'),
               ],
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text('brush.pressure_curve'.tr(), style: const TextStyle(fontSize: 13)),
+                value: as.pressureCurveEnabled,
+                onChanged: (v) => as.setPressureCurveEnabled(v),
+              ),
+              if (as.pressureCurveEnabled)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Center(
+                    child: CurveEditor(
+                      size: 160,
+                      points: as.pressureCurve.points,
+                      onChanged: (p) => as.setPressureCurve(PressureCurve(points: p)),
+                    ),
+                  ),
+                ),
               // Velocity/Pressure blend slider
               _slider('brush.vp_blend'.tr(), as.velocityPressureBlend, 0, 1, as.setVelocityPressureBlend, '${(as.velocityPressureBlend * 100).round()}%'),
             ],

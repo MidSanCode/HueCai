@@ -12,6 +12,7 @@ import '../models/drawable.dart';
 import '../models/selection_data.dart';
 import '../services/project_service.dart';
 import '../services/lgdf_codec.dart';
+import '../services/image_filters.dart';
 import '../models/mask_stroke.dart';
 import '../services/history_service.dart';
 import 'package:path_provider/path_provider.dart';
@@ -345,6 +346,82 @@ class ProjectProvider extends ChangeNotifier {
     if (_currentProject == null || index >= _currentProject!.layers.length) return;
     _currentProject!.layers[index].blendMode = mode;
     _markChanged();
+  }
+
+  // ------------------------------------------------------------- filters
+
+  /// Flattens the layer at [index], applies [filter] to its pixels, and
+  /// stores the result as the layer's bitmap (drawables are baked in).
+  ///
+  /// Returns false when the layer is locked, empty, or rasterization failed.
+  Future<bool> applyFilterToLayer(
+    int index,
+    RgbaImage Function(RgbaImage) filter,
+  ) async {
+    final project = _currentProject;
+    if (project == null || index < 0 || index >= project.layers.length) {
+      return false;
+    }
+    final layer = project.layers[index];
+    if (layer.locked) return false;
+    if (layer.drawables.isEmpty && layer.image == null) return false;
+
+    saveSnapshot();
+    final png = await LgdfCodec.renderLayerToPng(
+      layer,
+      project.settings.width,
+      project.settings.height,
+    );
+    if (png == null) return false;
+
+    final decoded = await _decodeImage(png);
+    if (decoded == null) return false;
+    final byteData = await decoded.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (byteData == null) return false;
+
+    final src = RgbaImage(
+      decoded.width,
+      decoded.height,
+      byteData.buffer.asUint8List(),
+    );
+    final filtered = filter(src);
+    final newImage = await _encodeRgbaImage(filtered);
+    if (newImage == null) return false;
+
+    decoded.dispose();
+    layer.image?.dispose();
+    layer.image = newImage;
+    layer.imagePath = null;
+    layer.imageOffset = Offset.zero;
+    layer.imageRotation = 0;
+    layer.imageScale = 1.0;
+    layer.imageFlipH = false;
+    layer.imageFlipV = false;
+    layer.drawables = [];
+    layer.imageVersion++;
+    _markChanged();
+    return true;
+  }
+
+  static Future<ui.Image?> _decodeImage(Uint8List png) async {
+    try {
+      final codec = await ui.instantiateImageCodec(png);
+      return (await codec.getNextFrame()).image;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<ui.Image?> _encodeRgbaImage(RgbaImage img) async {
+    final completer = Completer<ui.Image?>();
+    ui.decodeImageFromPixels(
+      img.pixels,
+      img.width,
+      img.height,
+      ui.PixelFormat.rgba8888,
+      (image) => completer.complete(image),
+    );
+    return completer.future;
   }
 
   // ------------------------------------------------------------- grouping

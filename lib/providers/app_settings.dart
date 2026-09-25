@@ -2,12 +2,16 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import '../services/stroke_stabilizer.dart';
 import 'tool_provider.dart';
 
 class AppSettings extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.system;
   String _languageCode = 'zh';
   double _stabilizer = 0;
+  StabilizerMode _stabilizerMode = StabilizerMode.smooth;
+  bool _pressureCurveEnabled = false;
+  PressureCurve _pressureCurve = PressureCurve();
   bool _velocityWidthEnabled = true;
   double _velocityMinScale = 0.35;
   double _velocityMaxScale = 1.0;
@@ -34,6 +38,9 @@ class AppSettings extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
   double get stabilizer => _stabilizer;
+  StabilizerMode get stabilizerMode => _stabilizerMode;
+  bool get pressureCurveEnabled => _pressureCurveEnabled;
+  PressureCurve get pressureCurve => _pressureCurve;
   bool get velocityWidthEnabled => _velocityWidthEnabled;
   double get velocityMinScale => _velocityMinScale;
   double get velocityMaxScale => _velocityMaxScale;
@@ -73,6 +80,13 @@ class AppSettings extends ChangeNotifier {
         );
         _languageCode = json['languageCode'] as String? ?? 'zh';
         _stabilizer = (json['stabilizer'] as num?)?.toDouble() ?? 0;
+        _stabilizerMode = StabilizerMode.values.firstWhere(
+          (m) => m.name == json['stabilizerMode'],
+          orElse: () => StabilizerMode.smooth,
+        );
+        _pressureCurveEnabled = json['pressureCurveEnabled'] as bool? ?? false;
+        _pressureCurve =
+            PressureCurve.fromJson(json['pressureCurvePoints'] as List?);
         _velocityWidthEnabled = json['velocityWidthEnabled'] as bool? ?? true;
         _velocityMinScale = (json['velocityMinScale'] as num?)?.toDouble() ?? 0.35;
         _velocityMaxScale = (json['velocityMaxScale'] as num?)?.toDouble() ?? 1.0;
@@ -102,6 +116,9 @@ class AppSettings extends ChangeNotifier {
         'themeMode': _themeMode.toString(),
         'languageCode': _languageCode,
         'stabilizer': _stabilizer,
+        'stabilizerMode': _stabilizerMode.name,
+        'pressureCurveEnabled': _pressureCurveEnabled,
+        'pressureCurvePoints': _pressureCurve.toJson(),
         'velocityWidthEnabled': _velocityWidthEnabled,
         'velocityMinScale': _velocityMinScale,
         'velocityMaxScale': _velocityMaxScale,
@@ -137,6 +154,28 @@ class AppSettings extends ChangeNotifier {
     _save();
     notifyListeners();
   }
+
+  void setStabilizerMode(StabilizerMode mode) {
+    _stabilizerMode = mode;
+    _save();
+    notifyListeners();
+  }
+
+  void setPressureCurveEnabled(bool v) {
+    _pressureCurveEnabled = v;
+    _save();
+    notifyListeners();
+  }
+
+  void setPressureCurve(PressureCurve curve) {
+    _pressureCurve = curve;
+    _save();
+    notifyListeners();
+  }
+
+  /// Maps raw stylus pressure through the configured curve when enabled.
+  double mapPressure(double raw) =>
+      _pressureCurveEnabled ? _pressureCurve.map(raw) : raw.clamp(0.0, 1.0);
 
   void setVelocityWidthEnabled(bool v) { _velocityWidthEnabled = v; _save(); notifyListeners(); }
   void setVelocityMinScale(double v) { _velocityMinScale = v.clamp(0.1, 1.0); _save(); notifyListeners(); }

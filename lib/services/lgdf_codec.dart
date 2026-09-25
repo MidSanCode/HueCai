@@ -670,6 +670,17 @@ class LgdfCodec {
       };
 
   /// Rasterizes one layer (bitmap + drawables) onto a transparent canvas.
+  ///
+  /// Public so filters and exporters can flatten a layer the same way the
+  /// project writer does.
+  static Future<Uint8List?> renderLayerToPng(
+    Layer layer,
+    int canvasW,
+    int canvasH,
+  ) =>
+      _layerToPng(layer, canvasW, canvasH);
+
+  /// Rasterizes one layer (bitmap + drawables) onto a transparent canvas.
   static Future<Uint8List?> _layerToPng(
     Layer layer,
     int canvasW,

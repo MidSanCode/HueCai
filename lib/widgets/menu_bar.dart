@@ -7,10 +7,12 @@ import '../providers/canvas_provider.dart';
 import '../providers/project_provider.dart';
 import '../providers/app_settings.dart';
 import '../services/project_service.dart';
+import '../services/stroke_stabilizer.dart';
 import '../models/drawable.dart';
 import '../screens/settings_screen.dart';
 import '../screens/editor_screen.dart';
 import 'dialogs/brush_editor_dialog.dart';
+import 'dialogs/filter_dialog.dart';
 import 'dialogs/unsaved_changes.dart';
 
 class EditorMenuBar extends StatelessWidget {
@@ -117,6 +119,17 @@ class _FullMenuBar extends StatelessWidget {
                 () => _importReference(context)),
             _MenuItem('menu.image.clear_reference'.tr(), Icons.image_not_supported,
                 () => context.read<CanvasProvider>().clearReference()),
+            const _MenuDivider(),
+            _MenuItem('filter.gaussian_blur'.tr(), Icons.blur_on,
+                () => showFilterDialog(context, FilterKind.gaussianBlur)),
+            _MenuItem('filter.unsharp_mask'.tr(), Icons.deblur,
+                () => showFilterDialog(context, FilterKind.unsharpMask)),
+            _MenuItem('filter.levels'.tr(), Icons.tune,
+                () => showFilterDialog(context, FilterKind.levels)),
+            _MenuItem('filter.curves'.tr(), Icons.show_chart,
+                () => showFilterDialog(context, FilterKind.curves)),
+            _MenuItem('filter.hue_saturation'.tr(), Icons.palette,
+                () => showFilterDialog(context, FilterKind.hueSaturation)),
           ]),
           _MenuButton(label: 'menu.layer'.tr(), children: [
             _MenuItem('menu.layer.new'.tr(), Icons.layers, () {
@@ -465,6 +478,28 @@ void _showStabilizerDialog(BuildContext context) {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            SegmentedButton<StabilizerMode>(
+              segments: [
+                ButtonSegment(
+                  value: StabilizerMode.off,
+                  label: Text('stabilizer.mode_off'.tr()),
+                ),
+                ButtonSegment(
+                  value: StabilizerMode.smooth,
+                  label: Text('stabilizer.mode_smooth'.tr()),
+                ),
+                ButtonSegment(
+                  value: StabilizerMode.stringPull,
+                  label: Text('stabilizer.mode_string'.tr()),
+                ),
+              ],
+              selected: {settings.stabilizerMode},
+              onSelectionChanged: (s) {
+                settings.setStabilizerMode(s.first);
+                setState(() {});
+              },
+            ),
+            const SizedBox(height: 12),
             Text('${settings.stabilizer.round()}', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Slider(
