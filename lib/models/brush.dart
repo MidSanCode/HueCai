@@ -11,6 +11,8 @@ enum BrushType {
   crayon,
   charcoal,
   calligraphy,
+  spray,
+  bristle,
   eraser,
 }
 
@@ -24,6 +26,10 @@ class Brush {
   double spacing;
   BrushTexture tipTexture;
 
+  /// Paint mixing: 0 = no pickup, 1 = fully blends toward the canvas color
+  /// under the stroke (wet mixing / paint loading feel).
+  double mix;
+
   Brush({
     required this.type,
     required this.nameKey,
@@ -33,6 +39,7 @@ class Brush {
     this.flow = 1.0,
     this.spacing = 0.1,
     this.tipTexture = BrushTexture.none,
+    this.mix = 0,
   });
 
   static List<Brush> defaults() => [
@@ -46,6 +53,8 @@ class Brush {
         Brush(type: BrushType.crayon, nameKey: 'brush.crayon', size: 6, hardness: 0.7, spacing: 0.25),
         Brush(type: BrushType.charcoal, nameKey: 'brush.charcoal', size: 8, hardness: 0.3, spacing: 0.2),
         Brush(type: BrushType.calligraphy, nameKey: 'brush.calligraphy', size: 8, hardness: 0.9, spacing: 0.1),
+        Brush(type: BrushType.spray, nameKey: 'brush.spray', size: 20, hardness: 0.5, opacity: 0.6),
+        Brush(type: BrushType.bristle, nameKey: 'brush.bristle', size: 12, hardness: 0.7, spacing: 0.12),
         Brush(type: BrushType.eraser, nameKey: 'brush.eraser', size: 10, hardness: 1.0),
       ];
 
@@ -58,6 +67,7 @@ class Brush {
     double? flow,
     double? spacing,
     BrushTexture? tipTexture,
+    double? mix,
   }) =>
       Brush(
         type: type ?? this.type,
@@ -68,5 +78,6 @@ class Brush {
         flow: flow ?? this.flow,
         spacing: spacing ?? this.spacing,
         tipTexture: tipTexture ?? this.tipTexture,
+        mix: mix ?? this.mix,
       );
 }

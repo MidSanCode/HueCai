@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -51,6 +52,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
   // Stabilizer smoothing
   final List<Offset> _stabilizerQueue = [];
   final StringPullStabilizer _stringPull = StringPullStabilizer();
+
+  // Mixing brush: canvas snapshot taken at stroke start; the loaded color
+  // evolves toward the canvas color beneath the tip.
+  Uint8List? _mixBytes;
+  int _mixW = 0, _mixH = 0;
+  Color _loadedColor = Colors.black;
 
   // Velocity tracking for dynamic brush width
   DateTime? _lastPointerTime;
@@ -1444,6 +1451,30 @@ class _PaintCanvasState extends State<PaintCanvas> {
     setState(() {});
   }
 
+  /// Mixing brush: blend the loaded color toward the canvas pixel under
+  /// [pos] by the brush's mix ratio, and return the new ARGB value.
+  int _mixStep(Offset pos, ToolProvider tp) {
+    final mix = tp.currentBrush.mix;
+    final bytes = _mixBytes;
+    if (bytes == null || mix <= 0) return _loadedColor.toARGB32();
+    final x = pos.dx.floor().clamp(0, _mixW - 1);
+    final y = pos.dy.floor().clamp(0, _mixH - 1);
+    final i = (y * _mixW + x) * 4;
+    if (i + 3 >= bytes.length) return _loadedColor.toARGB32();
+    // Snapshot is premultiplied RGBA.
+    final a = bytes[i + 3];
+    if (a > 8) {
+      final sampled = Color.fromARGB(
+        a,
+        (bytes[i] * 255 ~/ a),
+        (bytes[i + 1] * 255 ~/ a),
+        (bytes[i + 2] * 255 ~/ a),
+      );
+      _loadedColor = Color.lerp(_loadedColor, sampled, mix * 0.15) ?? _loadedColor;
+    }
+    return _loadedColor.toARGB32();
+  }
+
   /// Hit-tests ruler handles (move tool). Returns (rulerId, handleIndex).
   (String, int)? _rulerHandleAt(Offset canvasPos, ToolProvider tp) {
     for (final ruler in tp.rulers) {
@@ -1730,6 +1761,21 @@ class _PaintCanvasState extends State<PaintCanvas> {
         brushType: tp.brushType,
         tipTexture: tp.currentBrush.tipTexture,
       );
+      // Mixing brush: seed the loaded color and grab a canvas snapshot so
+      // stroke points can pick up the paint beneath the tip.
+      final mix = tp.currentBrush.mix;
+      if (mix > 0 && tp.currentTool == ToolType.brush) {
+        _loadedColor = tp.primaryColor;
+        drawable.colorValues = [tp.primaryColor.toARGB32()];
+        _mixBytes = null;
+        pp.rasterizeCanvas().then((img) async {
+          final data = await img.toByteData();
+          if (data == null) return;
+          _mixBytes = data.buffer.asUint8List();
+          _mixW = img.width;
+          _mixH = img.height;
+        }).catchError((_) {});
+      }
       _currentDrawable = drawable;
       pp.addDrawable(drawable);
       _dragConfirmed = true;
@@ -2079,6 +2125,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
       firstAlphas[0] = inkFromVelocity;
     }
     _currentDrawable!.widths ??= [];
+    final colorTrack = _currentDrawable!.colorValues;
     if (_currentDrawable!.points.isNotEmpty) {
       final lastPt = _currentDrawable!.points.last;
       final dist = (drawPos - lastPt).distance;
@@ -2091,11 +2138,13 @@ class _PaintCanvasState extends State<PaintCanvas> {
           _currentDrawable!.points.add(mid);
           _currentDrawable!.widths!.add(currentWidth);
           if (usesInk) _currentDrawable!.alphas!.add(inkFromVelocity);
+          if (colorTrack != null) colorTrack.add(_mixStep(mid, tp));
         }
       }
     }
     _currentDrawable!.points.add(drawPos);
     _currentDrawable!.widths!.add(currentWidth);
+    if (colorTrack != null) colorTrack.add(_mixStep(drawPos, tp));
     if (usesInk) _currentDrawable!.alphas!.add(inkFromVelocity);
     _currentDrawable!.contentVersion++;
     pp.updateDrawableSilent(_currentDrawable!.id, _currentDrawable!);
@@ -2224,6 +2273,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
     _rulerDragId = null;
     _rulerDragHandle = -1;
     _vpSnapOrigin = null;
+    _mixBytes = null;
   }
 
   void _cancelMultiClickShape() {

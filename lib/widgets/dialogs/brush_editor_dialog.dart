@@ -77,6 +77,9 @@ class _BrushEditorDialogState extends State<BrushEditorDialog> {
               const SizedBox(height: 12),
               _slider('brush.size'.tr(), tp.brushSize, 0.5, 100, tp.setBrushSize, tp.brushSize.toStringAsFixed(1)),
               _slider('brush.opacity'.tr(), tp.brushOpacity, 0, 1, tp.setBrushOpacity, '${(tp.brushOpacity * 100).round()}%'),
+              _slider('brush.mix'.tr(), tp.currentBrush.mix, 0, 1, (v) {
+                tp.setBrush(tp.currentBrush.copyWith(mix: v));
+              }, '${(tp.currentBrush.mix * 100).round()}%'),
               const Divider(height: 20),
               // Tip texture selection
               Text('brush.tip_texture'.tr(), style: theme.textTheme.labelMedium),

@@ -93,6 +93,10 @@ class Drawable {
   /// Tip texture applied to stamped brush marks (none = smooth tip).
   BrushTexture tipTexture;
 
+  /// Per-point colors (ARGB), parallel to [points]. Set by the mixing
+  /// brush: the stroke color evolves as it picks up canvas paint.
+  List<int>? colorValues;
+
   Drawable({
     required this.id,
     this.isShape = false,
@@ -121,6 +125,7 @@ class Drawable {
     this.fontFamily,
     this.brushType = BrushType.hardRound,
     this.tipTexture = BrushTexture.none,
+    this.colorValues,
   }) : gradientStops = gradientStops ?? [];
 
   Rect get bounds {
@@ -391,6 +396,7 @@ class Drawable {
     List<Offset?>? curveHandles,
     String? fontFamily,
     BrushTexture? tipTexture,
+    List<int>? colorValues,
   }) =>
       Drawable(
         id: id ?? this.id,
@@ -418,6 +424,8 @@ class Drawable {
         curveHandles: curveHandles ?? (this.curveHandles != null ? List<Offset?>.from(this.curveHandles!) : null),
         fontFamily: fontFamily ?? this.fontFamily,
         tipTexture: tipTexture ?? this.tipTexture,
+        colorValues: colorValues ??
+            (this.colorValues != null ? List.from(this.colorValues!) : null),
       );
 
   Map<String, dynamic> toJson() => {
@@ -438,6 +446,7 @@ class Drawable {
         'gradientAngle': gradientAngle,
         'brushType': brushType.name,
         if (tipTexture != BrushTexture.none) 'tipTexture': tipTexture.name,
+        if (colorValues != null) 'colorValues': colorValues,
         if (textData != null) 'text': textData,
         if (textData != null) 'fontSize': fontSize,
         if (fontFamily != null) 'fontFamily': fontFamily,
@@ -487,6 +496,9 @@ class Drawable {
         tipTexture: json['tipTexture'] != null
             ? BrushTexture.values.byName(json['tipTexture'] as String)
             : BrushTexture.none,
+        colorValues: json['colorValues'] != null
+            ? (json['colorValues'] as List).map((e) => (e as num).toInt()).toList()
+            : null,
         isLiquify: json['isLiquify'] as bool? ?? false,
         textData: json['text'] as String?,
         fontFamily: json['fontFamily'] as String?,
@@ -605,6 +617,12 @@ class Drawable {
       case BrushType.marker:
         _drawMarkerStroke(canvas, paint);
         return;
+      case BrushType.spray:
+        _drawSprayStroke(canvas, paint);
+        return;
+      case BrushType.bristle:
+        _drawBristleStroke(canvas, paint);
+        return;
       default:
         break;
     }
@@ -630,6 +648,7 @@ class Drawable {
         ..shader = paint.shader;
       for (int i = 0; i < points.length - 1; i++) {
         segPaint.strokeWidth = widths![i];
+        if (colorValues != null) segPaint.color = _colorAt(i, paint.color);
         canvas.drawLine(points[i], points[i + 1], segPaint);
       }
     } else {
@@ -671,6 +690,73 @@ class Drawable {
 
   double _widthAt(int i) =>
       widths != null && i < widths!.length ? widths![i] : strokeWidth;
+
+  /// Per-point color (mixing brush), falling back to the stroke color.
+  Color _colorAt(int i, Color fallback) =>
+      (colorValues != null && i < colorValues!.length)
+          ? Color(colorValues![i])
+          : fallback;
+
+  /// Deterministic per-stroke RNG seeded from the drawable id.
+  double Function() _rng() {
+    var seed = id.hashCode & 0x7FFFFFFF;
+    return () {
+      seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+      return seed / 0x7FFFFFFF;
+    };
+  }
+
+  /// Spray brush: scatters small particles within the tip radius at every
+  /// stroke point. Density scales with radius.
+  void _drawSprayStroke(Canvas canvas, Paint paint) {
+    final rnd = _rng();
+    final p = Paint()..style = PaintingStyle.fill;
+    for (int i = 0; i < points.length; i++) {
+      final radius = max(2.0, _widthAt(i));
+      final count = (radius * 1.2).round().clamp(4, 60);
+      p.color = _colorAt(i, paint.color)
+          .withValues(alpha: (opacity * _inkAt(i) * 0.6).clamp(0.0, 1.0));
+      for (int n = 0; n < count; n++) {
+        final angle = rnd() * 2 * pi;
+        final r = sqrt(rnd()) * radius;
+        final dot = max(0.4, radius * 0.05);
+        canvas.drawCircle(
+          points[i] + Offset(cos(angle) * r, sin(angle) * r),
+          dot,
+          p,
+        );
+      }
+    }
+  }
+
+  /// Bristle (hair) brush: each segment is drawn as a fan of thin parallel
+  /// lines with slight jitter, like a multi-hair brush tip.
+  void _drawBristleStroke(Canvas canvas, Paint paint) {
+    if (points.length < 2) return;
+    const bristles = 7;
+    final rnd = _rng();
+    final p = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    for (int i = 1; i < points.length; i++) {
+      final a = points[i - 1];
+      final b = points[i];
+      final dir = b - a;
+      final w = max(1.0, _widthAt(i));
+      final perp = dir.distance > 1e-6
+          ? Offset(-dir.dy, dir.dx) / dir.distance
+          : const Offset(0, 1);
+      p.color = _colorAt(i, paint.color)
+          .withValues(alpha: (opacity * _inkAt(i)).clamp(0.0, 1.0));
+      p.strokeWidth = max(0.5, w / bristles * 0.9);
+      for (int k = 0; k < bristles; k++) {
+        final spread = (k - (bristles - 1) / 2) / ((bristles - 1) / 2);
+        final jitter = (rnd() - 0.5) * 0.3;
+        final o = (spread + jitter) * w / 2;
+        canvas.drawLine(a + perp * o, b + perp * o, p);
+      }
+    }
+  }
 
   /// Stamps the colorized tip sprite at every stroke point. Returns false
   /// (caller falls back to plain rendering) while the sprite is decoding.
