@@ -2408,8 +2408,8 @@ class _CanvasPainter extends CustomPainter {
       canvas.drawRect(docRect, Paint()..color = bgColor);
     }
 
-    for (final layer in project.layers) {
-      if (!layer.visible) continue;
+    void renderLayer(Layer layer) {
+      if (!layer.visible) return;
       final drawingHere = currentDrawable != null &&
           layer.drawables.contains(currentDrawable);
       final entry = layerRasters[layer.id];
@@ -2422,7 +2422,7 @@ class _CanvasPainter extends CustomPainter {
         for (final d in layer.drawables) {
           if (d.selected) _drawSelectionHandles(canvas, d);
         }
-        continue;
+        return;
       }
       // Slow path: draw content into an isolated layer so the blend mode
       // applies only to this layer's pixels when it is composited back.
@@ -2460,6 +2460,28 @@ class _CanvasPainter extends CustomPainter {
             _drawSelectionHandles(canvas, d);
           }
         }
+      }
+    }
+
+    // Render bottom-to-top in runs: a group block is composited into an
+    // isolated layer first, so the group's own opacity/blend mode apply to
+    // the *merged* members rather than each member individually.
+    for (final run in project.layerRuns()) {
+      if (run.isGroup) {
+        final group = run.group!;
+        if (!group.visible) continue;
+        canvas.saveLayer(
+          docRect,
+          Paint()
+            ..color = Colors.white.withValues(alpha: group.opacity)
+            ..blendMode = group.blendMode.toFlutterBlendMode(),
+        );
+        for (var i = run.start; i <= run.end; i++) {
+          renderLayer(project.layers[i]);
+        }
+        canvas.restore();
+      } else {
+        renderLayer(project.layers[run.singleIndex!]);
       }
     }
 

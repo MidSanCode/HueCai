@@ -357,8 +357,8 @@ class ProjectService {
           Paint()..color = bgColor,
         );
       }
-      for (final layer in project.layers) {
-        if (!layer.visible) continue;
+      void renderLayer(Layer layer) {
+        if (!layer.visible) return;
         // Isolate each layer so its blend mode applies only to its own
         // pixels when composited back.
         canvas.saveLayer(
@@ -387,6 +387,27 @@ class ProjectService {
           canvas.restore();
         }
         canvas.restore();
+      }
+
+      // Group blocks composite into an isolated layer first so the group's
+      // own opacity/blend mode applies to the merged members.
+      for (final run in project.layerRuns()) {
+        if (run.isGroup) {
+          final group = run.group!;
+          if (!group.visible) continue;
+          canvas.saveLayer(
+            Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+            Paint()
+              ..color = Colors.white.withValues(alpha: group.opacity)
+              ..blendMode = group.blendMode.toFlutterBlendMode(),
+          );
+          for (var i = run.start; i <= run.end; i++) {
+            renderLayer(project.layers[i]);
+          }
+          canvas.restore();
+        } else {
+          renderLayer(project.layers[run.singleIndex!]);
+        }
       }
       canvas.restore();
       final picture = recorder.endRecording();

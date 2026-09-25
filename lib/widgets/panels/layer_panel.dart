@@ -3,6 +3,47 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
 import '../../providers/project_provider.dart';
 import '../../models/layer.dart';
+import '../../models/project.dart';
+
+Widget _buildLayerItem(
+  BuildContext ctx,
+  ProjectProvider provider,
+  Project project,
+  int idx, {
+  bool indented = false,
+}) {
+  final layer = project.layers[idx];
+  final isCurrent = project.currentLayerIndex == idx;
+  final isBg = idx == 0;
+  final bgColor = isBg && layer.drawables.isNotEmpty
+      ? layer.drawables.first.color
+      : null;
+  final item = _LayerItem(
+    layer: layer,
+    isCurrent: isCurrent,
+    index: idx,
+    isBackground: isBg,
+    bgColor: bgColor,
+    onBgColorTap: isBg ? () => _showBgColorPicker(ctx, provider, bgColor!) : null,
+    onTap: () => provider.setCurrentLayer(idx),
+    onDelete: () {
+      provider.saveSnapshot();
+      provider.deleteLayer(idx);
+    },
+    onDuplicate: () {
+      provider.saveSnapshot();
+      provider.duplicateLayer(idx);
+    },
+    onClear: () => provider.clearLayer(idx),
+    onMergeDown: () => provider.mergeDownLayer(idx),
+    onOpacityChanged: (v) => provider.setLayerOpacity(idx, v),
+  );
+  if (!indented) return item;
+  return Padding(
+    padding: const EdgeInsets.only(left: 16),
+    child: item,
+  );
+}
 
 class LayerPanel extends StatelessWidget {
   const LayerPanel({super.key});
@@ -52,44 +93,45 @@ class LayerPanel extends StatelessWidget {
                       tooltip: 'layer.new'.tr(),
                       visualDensity: VisualDensity.compact,
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+                      onPressed: project.layers.isEmpty
+                          ? null
+                          : () => provider.createGroupFromCurrentLayer(),
+                      tooltip: 'layer.new_group'.tr(),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   ],
                 ),
                 const Divider(height: 8),
                 SizedBox(
                   height: 120,
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: project.layers.length,
-                    itemBuilder: (ctx, i) {
-                      final idx = project.layers.length - 1 - i;
-                      final layer = project.layers[idx];
-                      final isCurrent = project.currentLayerIndex == idx;
-                      final isBg = idx == 0;
-                      final bgColor = isBg && layer.drawables.isNotEmpty
-                          ? layer.drawables.first.color
-                          : null;
-                      return _LayerItem(
-                        layer: layer,
-                        isCurrent: isCurrent,
-                        index: idx,
-                        isBackground: isBg,
-                        bgColor: bgColor,
-                        onBgColorTap: isBg ? () => _showBgColorPicker(ctx, provider, bgColor!) : null,
-                        onTap: () => provider.setCurrentLayer(idx),
-                        onDelete: () {
-                          provider.saveSnapshot();
-                          provider.deleteLayer(idx);
-                        },
-                        onDuplicate: () {
-                          provider.saveSnapshot();
-                          provider.duplicateLayer(idx);
-                        },
-                        onClear: () => provider.clearLayer(idx),
-                        onMergeDown: () => provider.mergeDownLayer(idx),
-                        onOpacityChanged: (v) => provider.setLayerOpacity(idx, v),
-                      );
-                    },
-                  ),
+                  child: Builder(builder: (ctx) {
+                    // Display list, top first: group headers plus (when the
+                    // group is expanded) their members, indented.
+                    final runs = project.layerRuns().reversed.toList();
+                    final items = <Widget>[];
+                    for (final run in runs) {
+                      if (run.isGroup) {
+                        final group = run.group!;
+                        items.add(_GroupHeader(
+                          group: group,
+                          provider: provider,
+                        ));
+                        if (group.expanded) {
+                          for (var i = run.end; i >= run.start; i--) {
+                            items.add(_buildLayerItem(ctx, provider, project, i, indented: true));
+                          }
+                        }
+                      } else {
+                        items.add(_buildLayerItem(ctx, provider, project, run.singleIndex!));
+                      }
+                    }
+                    return ListView(
+                      shrinkWrap: true,
+                      children: items,
+                    );
+                  }),
                 ),
               ],
             ),
@@ -309,6 +351,12 @@ class _LayerItemState extends State<_LayerItem> {
           title: Text('layer.clear'.tr()),
           dense: true,
         )),
+        if (widget.layer.groupId != null)
+          PopupMenuItem(value: 'leave_group', child: ListTile(
+            leading: const Icon(Icons.drive_file_move_outlined, size: 18),
+            title: Text('layer.leave_group'.tr()),
+            dense: true,
+          )),
         PopupMenuItem(value: 'blend', child: StatefulBuilder(
           builder: (ctx, setState) => Column(
             mainAxisSize: MainAxisSize.min,
@@ -355,6 +403,9 @@ class _LayerItemState extends State<_LayerItem> {
         case 'merge': widget.onMergeDown();
         case 'duplicate': widget.onDuplicate();
         case 'clear': widget.onClear();
+        case 'leave_group':
+          context.read<ProjectProvider>()
+              .moveLayerToGroup(widget.index, null);
       }
     });
   }
@@ -457,4 +508,152 @@ void _showBgColorPicker(BuildContext context, ProjectProvider pp, Color currentB
       ],
     ),
   );
+}
+
+/// Header row for a layer group: expand arrow, visibility eye, name, and a
+/// context menu for group operations (rename / opacity / dissolve / delete).
+class _GroupHeader extends StatelessWidget {
+  final LayerGroup group;
+  final ProjectProvider provider;
+
+  const _GroupHeader({required this.group, required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Offset? tapPosition;
+    return GestureDetector(
+      onSecondaryTapDown: (d) => tapPosition = d.globalPosition,
+      onSecondaryTap: () => _showGroupMenu(context, tapPosition),
+      onLongPressStart: (d) => tapPosition = d.globalPosition,
+      onLongPress: () => _showGroupMenu(context, tapPosition),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 1),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Row(
+            children: [
+              GestureDetector(
+                onTap: () => provider.toggleGroupExpanded(group.id),
+                child: Icon(
+                  group.expanded ? Icons.expand_more : Icons.chevron_right,
+                  size: 14,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: () => provider.toggleGroupVisibility(group.id),
+                child: Icon(
+                  group.visible ? Icons.visibility : Icons.visibility_off,
+                  size: 14,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(Icons.folder_outlined,
+                  size: 14, color: theme.colorScheme.primary),
+              const SizedBox(width: 4),
+              Expanded(
+                child: InkWell(
+                  onDoubleTap: () => _renameGroup(context),
+                  child: Text(
+                    group.name,
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showGroupMenu(BuildContext context, Offset? position) {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        (position ?? const Offset(100, 100)) & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(value: 'rename', child: Text('layer.rename_group'.tr())),
+        PopupMenuItem(value: 'opacity', child: Text('layer.opacity'.tr())),
+        PopupMenuItem(value: 'dissolve', child: Text('layer.ungroup'.tr())),
+        PopupMenuItem(
+          value: 'delete_layers',
+          child: Text('layer.delete_group_layers'.tr()),
+        ),
+      ],
+    ).then((value) {
+      switch (value) {
+        case 'rename':
+          _renameGroup(context);
+        case 'opacity':
+          _showGroupOpacity(context);
+        case 'dissolve':
+          provider.dissolveGroup(group.id);
+        case 'delete_layers':
+          provider.deleteGroup(group.id, deleteLayers: true);
+      }
+    });
+  }
+
+  void _renameGroup(BuildContext context) {
+    final controller = TextEditingController(text: group.name);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('layer.rename_group'.tr()),
+        content: TextField(controller: controller, autofocus: true),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('dialog.cancel'.tr()),
+          ),
+          TextButton(
+            onPressed: () {
+              provider.renameGroup(group.id, controller.text.trim());
+              Navigator.of(ctx).pop();
+            },
+            child: Text('dialog.ok'.tr()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showGroupOpacity(BuildContext context) {
+    var value = group.opacity;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: Text('layer.opacity'.tr()),
+          content: Slider(
+            value: value,
+            onChanged: (v) {
+              setState(() => value = v);
+              provider.setGroupOpacity(group.id, v);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('dialog.ok'.tr()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

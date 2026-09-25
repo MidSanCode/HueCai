@@ -231,9 +231,13 @@ class ProjectProvider extends ChangeNotifier {
           'layer.default_name'.tr(
             namedArgs: {'n': '${_currentProject!.layers.length + 1}'},
           ),
+      // A new layer joins the current layer's group, matching how other
+      // editors insert into the selected folder.
+      groupId: _currentProject!.currentLayer?.groupId,
     );
     _currentProject!.layers.add(layer);
     _currentProject!.currentLayerIndex = _currentProject!.layers.length - 1;
+    _normalizeGroupContiguity();
     _markChanged();
   }
 
@@ -323,6 +327,7 @@ class ProjectProvider extends ChangeNotifier {
     final layer = _currentProject!.layers.removeAt(index);
     _currentProject!.layers.insert(index + 1, layer);
     _currentProject!.currentLayerIndex = index + 1;
+    _normalizeGroupContiguity();
     _markChanged();
   }
 
@@ -331,6 +336,7 @@ class ProjectProvider extends ChangeNotifier {
     final layer = _currentProject!.layers.removeAt(index);
     _currentProject!.layers.insert(index - 1, layer);
     _currentProject!.currentLayerIndex = index - 1;
+    _normalizeGroupContiguity();
     _markChanged();
   }
 
@@ -338,6 +344,147 @@ class ProjectProvider extends ChangeNotifier {
     if (_currentProject == null || index >= _currentProject!.layers.length) return;
     _currentProject!.layers[index].blendMode = mode;
     _markChanged();
+  }
+
+  // ------------------------------------------------------------- grouping
+
+  /// Creates a group containing the current layer (if any).
+  ///
+  /// Returns the new group id, or null when there is no project/layer.
+  String? createGroupFromCurrentLayer({String? name}) {
+    final project = _currentProject;
+    if (project == null || project.layers.isEmpty) return null;
+    saveSnapshot();
+    final group = LayerGroup(
+      id: _uuid.v4(),
+      name: name ??
+          'layer.group_default_name'
+              .tr(namedArgs: {'n': '${project.groups.length + 1}'}),
+    );
+    project.groups.add(group);
+    project.layers[project.currentLayerIndex].groupId = group.id;
+    _markChanged();
+    return group.id;
+  }
+
+  /// Removes the group but keeps its layers (they become ungrouped).
+  void dissolveGroup(String groupId) {
+    final project = _currentProject;
+    if (project == null) return;
+    saveSnapshot();
+    for (final layer in project.layers) {
+      if (layer.groupId == groupId) layer.groupId = null;
+    }
+    project.groups.removeWhere((g) => g.id == groupId);
+    _markChanged();
+  }
+
+  /// Removes the group; with [deleteLayers] also removes its member layers.
+  void deleteGroup(String groupId, {bool deleteLayers = false}) {
+    final project = _currentProject;
+    if (project == null) return;
+    saveSnapshot();
+    if (deleteLayers) {
+      if (project.layers.where((l) => l.groupId != groupId).isEmpty) return;
+      project.layers.removeWhere((l) => l.groupId == groupId);
+      if (project.currentLayerIndex >= project.layers.length) {
+        project.currentLayerIndex = project.layers.length - 1;
+      }
+    } else {
+      for (final layer in project.layers) {
+        if (layer.groupId == groupId) layer.groupId = null;
+      }
+    }
+    project.groups.removeWhere((g) => g.id == groupId);
+    _markChanged();
+  }
+
+  void renameGroup(String groupId, String newName) {
+    final group = _currentProject?.groupById(groupId);
+    if (group == null) return;
+    group.name = newName;
+    _markChanged();
+  }
+
+  void toggleGroupExpanded(String groupId) {
+    final group = _currentProject?.groupById(groupId);
+    if (group == null) return;
+    group.expanded = !group.expanded;
+    notifyListeners();
+  }
+
+  void toggleGroupVisibility(String groupId) {
+    final group = _currentProject?.groupById(groupId);
+    if (group == null) return;
+    group.visible = !group.visible;
+    _markChanged();
+  }
+
+  void setGroupOpacity(String groupId, double opacity) {
+    final group = _currentProject?.groupById(groupId);
+    if (group == null) return;
+    group.opacity = opacity.clamp(0.0, 1.0);
+    notifyListeners();
+  }
+
+  void setGroupBlendMode(String groupId, BlendModeExt mode) {
+    final group = _currentProject?.groupById(groupId);
+    if (group == null) return;
+    group.blendMode = mode;
+    _markChanged();
+  }
+
+  /// Moves a layer into (or out of) a group, keeping group members
+  /// contiguous by placing it at the top edge of the group's block.
+  void moveLayerToGroup(int index, String? groupId) {
+    final project = _currentProject;
+    if (project == null || index < 0 || index >= project.layers.length) return;
+    saveSnapshot();
+    final layer = project.layers.removeAt(index);
+    layer.groupId = groupId;
+    if (groupId == null || project.groupById(groupId) == null) {
+      layer.groupId = null;
+      project.layers.insert(index, layer);
+    } else {
+      // Insert just above the group's current topmost member.
+      var insertAt = index;
+      for (var i = 0; i < project.layers.length; i++) {
+        if (project.layers[i].groupId == groupId) insertAt = i + 1;
+      }
+      project.layers.insert(insertAt, layer);
+      project.currentLayerIndex = insertAt;
+    }
+    _normalizeGroupContiguity();
+    _markChanged();
+  }
+
+  /// Reorders layers so every group's members form one contiguous block,
+  /// preserving each block's position at its first member.
+  void _normalizeGroupContiguity() {
+    final project = _currentProject;
+    if (project == null) return;
+    final layers = project.layers;
+    final current = project.currentLayer;
+    final result = <Layer>[];
+    final placed = <String>{};
+    for (final layer in layers) {
+      final gid = layer.groupId;
+      if (gid == null || project.groupById(gid) == null) {
+        layer.groupId = null;
+        result.add(layer);
+        continue;
+      }
+      if (placed.contains(gid)) continue;
+      placed.add(gid);
+      for (final member in layers) {
+        if (member.groupId == gid) result.add(member);
+      }
+    }
+    project.layers = result;
+    if (current != null) {
+      final idx = result.indexOf(current);
+      if (idx >= 0) project.currentLayerIndex = idx;
+    }
   }
 
   void deleteDrawable(String drawableId) {

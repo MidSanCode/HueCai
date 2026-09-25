@@ -180,6 +180,7 @@ class LgdfCodec {
       },
       'canvas': project.settings.toJson(),
       'layers': project.layers.map(_layerDescriptor).toList(),
+      'groups': project.groups.map((g) => g.toJson()).toList(),
       'history': jsonDecode(jsonEncode(history.toJson())),
     });
 
@@ -207,6 +208,7 @@ class LgdfCodec {
         'opacity': layer.opacity,
         'locked': layer.locked,
         'blend_mode': layer.blendMode.jsonName,
+        'group_id': layer.groupId,
         'image_path': layer.imagePath,
         'image_offset': {'x': layer.imageOffset.dx, 'y': layer.imageOffset.dy},
         'image_rotation': layer.imageRotation,
@@ -226,6 +228,7 @@ class LgdfCodec {
       opacity: (json['opacity'] as num?)?.toDouble() ?? 1.0,
       locked: json['locked'] as bool? ?? false,
       blendMode: BlendModeExt.fromJsonName(json['blend_mode'] as String?),
+      groupId: json['group_id'] as String?,
       imagePath: json['image_path'] as String?,
       imageOffset: offset == null
           ? Offset.zero
@@ -381,6 +384,9 @@ class LgdfCodec {
         backgroundColor: settings.backgroundColor,
       ),
       layers: layers,
+      groups: (config['groups'] as List?)
+          ?.map((g) => LayerGroup.fromJson(g as Map<String, dynamic>))
+          .toList(),
       createdAt: DateTime.fromMillisecondsSinceEpoch(
         ((info['created_time'] as num?)?.toInt() ?? 0) * 1000,
       ),

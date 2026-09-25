@@ -142,6 +142,66 @@ enum BlendModeExt {
 
 enum BlendModeFamily { normal, darken, lighten, contrast, inversion, component, composite }
 
+/// A named group of consecutive layers.
+///
+/// Layers stay in the project's flat ordered list; a group is membership
+/// metadata ([Layer.groupId]) whose members must be contiguous — the
+/// provider enforces that invariant on every structural change. The group's
+/// own [opacity]/[blendMode]/[visible] apply to the composited result of all
+/// members, exactly like a folder of layers in other editors.
+class LayerGroup {
+  final String id;
+  String name;
+  bool visible;
+  double opacity;
+  BlendModeExt blendMode;
+  bool expanded;
+
+  LayerGroup({
+    required this.id,
+    required this.name,
+    this.visible = true,
+    this.opacity = 1.0,
+    this.blendMode = BlendModeExt.normal,
+    this.expanded = true,
+  });
+
+  LayerGroup copyWith({
+    String? id,
+    String? name,
+    bool? visible,
+    double? opacity,
+    BlendModeExt? blendMode,
+    bool? expanded,
+  }) =>
+      LayerGroup(
+        id: id ?? this.id,
+        name: name ?? this.name,
+        visible: visible ?? this.visible,
+        opacity: opacity ?? this.opacity,
+        blendMode: blendMode ?? this.blendMode,
+        expanded: expanded ?? this.expanded,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'visible': visible,
+        'opacity': opacity,
+        'blendMode': blendMode.jsonName,
+        'expanded': expanded,
+      };
+
+  factory LayerGroup.fromJson(Map<String, dynamic> json) => LayerGroup(
+        id: json['id'] as String,
+        name: json['name'] as String? ?? 'Group',
+        visible: json['visible'] as bool? ?? true,
+        opacity: (json['opacity'] as num?)?.toDouble() ?? 1.0,
+        blendMode: BlendModeExt.fromJsonName(json['blendMode'] as String?),
+        expanded: json['expanded'] as bool? ?? true,
+      );
+}
+
 class Layer {
   final String id;
   String name;
@@ -158,6 +218,10 @@ class Layer {
   bool imageFlipV;
   String? thumbnailPath;
   List<Drawable> drawables;
+
+  /// Id of the [LayerGroup] this layer belongs to, or null when ungrouped.
+  /// Members of one group are contiguous in [Project.layers].
+  String? groupId;
 
   /// Bumped whenever the image transform (offset/rotation/scale/flip)
   /// changes, so the painter's raster cache knows to re-render this layer.
@@ -178,6 +242,7 @@ class Layer {
     this.imageFlipH = false,
     this.imageFlipV = false,
     this.thumbnailPath,
+    this.groupId,
     List<Drawable>? drawables,
   }) : drawables = drawables ?? [];
 
@@ -196,6 +261,7 @@ class Layer {
     bool? imageFlipH,
     bool? imageFlipV,
     String? thumbnailPath,
+    String? groupId,
     List<Drawable>? drawables,
   }) =>
       Layer(
@@ -213,6 +279,7 @@ class Layer {
         imageFlipH: imageFlipH ?? this.imageFlipH,
         imageFlipV: imageFlipV ?? this.imageFlipV,
         thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+        groupId: groupId ?? this.groupId,
         drawables: drawables ?? this.drawables,
       );
 
@@ -230,6 +297,7 @@ class Layer {
         'imageFlipH': imageFlipH,
         'imageFlipV': imageFlipV,
         'thumbnailPath': thumbnailPath,
+        'groupId': groupId,
         'drawables': drawables.map((d) => d.toJson()).toList(),
       };
 
@@ -252,6 +320,7 @@ class Layer {
         imageFlipH: json['imageFlipH'] as bool? ?? false,
         imageFlipV: json['imageFlipV'] as bool? ?? false,
         thumbnailPath: json['thumbnailPath'] as String?,
+        groupId: json['groupId'] as String?,
         drawables: (json['drawables'] as List?)
                 ?.map(
                     (d) => Drawable.fromJson(d as Map<String, dynamic>))
