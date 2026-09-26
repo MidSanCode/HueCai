@@ -5,6 +5,7 @@ import '../services/brush_texture.dart';
 import '../services/assist_ruler.dart';
 import '../services/palette_service.dart';
 import '../services/gamut.dart';
+import '../models/brush_preset.dart';
 
 enum ToolType {
   move,
@@ -33,6 +34,7 @@ class ToolProvider extends ChangeNotifier {
   Color _gradientStartColor = Colors.black;
   Color _gradientEndColor = Colors.blue;
   Brush _currentBrush = Brush.defaults().first;
+  String? _activePresetId;
   double _brushSize = 5.0;
   double _brushOpacity = 1.0;
   bool _isStandardMode = false;
@@ -58,6 +60,10 @@ class ToolProvider extends ChangeNotifier {
   Color get gradientEndColor => _gradientEndColor;
   Brush get currentBrush => _currentBrush;
   BrushType get brushType => _currentBrush.type;
+
+  /// Id of the preset the brush currently mirrors, or null once it has been
+  /// tweaked by hand.
+  String? get activePresetId => _activePresetId;
   double get brushSize => _brushSize;
   double get brushOpacity => _brushOpacity;
   bool get isStandardMode => _isStandardMode;
@@ -286,28 +292,53 @@ class ToolProvider extends ChangeNotifier {
     _currentBrush = brush;
     _brushSize = brush.size;
     _brushOpacity = brush.opacity;
+    _activePresetId = null;
+    notifyListeners();
+  }
+
+  /// Applies a saved preset to the live brush state and remembers which one
+  /// is active (cleared again as soon as the brush is tweaked by hand).
+  void applyPreset(BrushPreset preset) {
+    _activePresetId = preset.id;
+    _currentBrush = Brush(
+      type: preset.type,
+      nameKey: 'preset.custom',
+      size: preset.size,
+      hardness: preset.hardness,
+      opacity: preset.opacity,
+      flow: preset.flow,
+      spacing: preset.spacing,
+      tipTexture: preset.tipTexture,
+      mix: preset.mix,
+    );
+    _brushSize = preset.size;
+    _brushOpacity = preset.opacity;
     notifyListeners();
   }
 
   void setBrushType(BrushType type) {
     _currentBrush = _currentBrush.copyWith(type: type);
+    _activePresetId = null;
     notifyListeners();
   }
 
   void setBrushTipTexture(BrushTexture texture) {
     _currentBrush = _currentBrush.copyWith(tipTexture: texture);
+    _activePresetId = null;
     notifyListeners();
   }
 
   void setBrushSize(double size) {
     _brushSize = size.clamp(0.5, 100.0);
     _currentBrush.size = _brushSize;
+    _activePresetId = null;
     notifyListeners();
   }
 
   void setBrushOpacity(double opacity) {
     _brushOpacity = opacity.clamp(0.0, 1.0);
     _currentBrush.opacity = _brushOpacity;
+    _activePresetId = null;
     notifyListeners();
   }
 

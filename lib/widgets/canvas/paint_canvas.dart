@@ -18,6 +18,7 @@ import '../../providers/app_settings.dart';
 import '../../services/stroke_stabilizer.dart';
 import '../../services/assist_ruler.dart';
 import '../../services/image_filters.dart';
+import '../../services/pattern_renderer.dart';
 import '../../utils/logger.dart';
 import '../dialogs/text_input_dialog.dart';
 
@@ -967,6 +968,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
         if (as.fillGrowShrink != 0) mask.grow(as.fillGrowShrink);
         if (mask.isEmpty) return;
         final spans = mask.extractSpans(antiAlias: as.fillAntiAlias);
+        // Pattern fill: make sure the tile is decoded before committing, so
+        // the first paint already shows the pattern (not the flat fallback).
+        final pattern = as.fillWithPattern ? as.activePattern : null;
+        if (pattern != null) {
+          await PatternRenderer.ensure(pattern);
+        }
         pp.saveSnapshot();
         final drawable = Drawable(
           id: const Uuid().v4(),
@@ -974,6 +981,7 @@ class _PaintCanvasState extends State<PaintCanvas> {
           color: tp.primaryColor,
           opacity: tp.brushOpacity,
           fillSpans: spans,
+          fillPattern: pattern,
         );
         pp.addDrawable(drawable);
         pp.refresh();

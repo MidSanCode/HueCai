@@ -13,6 +13,7 @@ import '../widgets/tools/tool_panel.dart';
 import '../widgets/tools/image_edit_toolbar.dart';
 import '../widgets/panels/color_panel.dart';
 import '../widgets/panels/brush_panel.dart';
+import '../widgets/panels/pattern_panel.dart';
 import '../widgets/panels/layer_panel.dart';
 import '../widgets/panels/timeline_panel.dart';
 import '../widgets/canvas/paint_canvas.dart';
@@ -380,6 +381,7 @@ class _WideLayoutState extends State<_WideLayout> {
                 children: [
                   ColorPanel(toolProvider: toolProvider),
                   const BrushPanel(),
+                  const PatternPanel(),
                   const LayerPanel(),
                 ],
               ),

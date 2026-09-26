@@ -2,8 +2,10 @@ import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'brush.dart';
+import 'pattern.dart';
 import '../services/brush_texture.dart';
 import '../services/path_text.dart';
+import '../services/pattern_renderer.dart';
 
 enum ShapeType { rect, ellipse, polygon, line, curve, path }
 
@@ -102,6 +104,11 @@ class Drawable {
   /// Distance along the baseline where the first glyph is placed.
   double textPathOffset;
 
+  /// Pattern fill: when set, [fillSpans] are painted with this repeating
+  /// pattern instead of [color]. Stored inline (it is a handful of numbers)
+  /// so the document stays self-contained.
+  PatternSpec? fillPattern;
+
   /// Text tool: resolved font family (system font name). Null = default.
   String? fontFamily;
   BrushType brushType;
@@ -141,6 +148,7 @@ class Drawable {
     this.pathClosed = false,
     this.textOnPath = false,
     this.textPathOffset = 0.0,
+    this.fillPattern,
     this.fontFamily,
     this.brushType = BrushType.hardRound,
     this.tipTexture = BrushTexture.none,
@@ -445,6 +453,7 @@ class Drawable {
     bool? pathClosed,
     bool? textOnPath,
     double? textPathOffset,
+    PatternSpec? fillPattern,
     String? fontFamily,
     BrushTexture? tipTexture,
     List<int>? colorValues,
@@ -476,6 +485,7 @@ class Drawable {
         pathClosed: pathClosed ?? this.pathClosed,
         textOnPath: textOnPath ?? this.textOnPath,
         textPathOffset: textPathOffset ?? this.textPathOffset,
+        fillPattern: fillPattern ?? this.fillPattern,
         fontFamily: fontFamily ?? this.fontFamily,
         tipTexture: tipTexture ?? this.tipTexture,
         colorValues: colorValues ??
@@ -514,6 +524,7 @@ class Drawable {
         if (pathClosed) 'pathClosed': pathClosed,
         if (textOnPath) 'textOnPath': textOnPath,
         if (textOnPath) 'textPathOffset': textPathOffset,
+        if (fillPattern != null) 'fillPattern': fillPattern!.toJson(),
       };
 
   factory Drawable.fromJson(Map<String, dynamic> json) => Drawable(
@@ -576,6 +587,10 @@ class Drawable {
         pathClosed: json['pathClosed'] as bool? ?? false,
         textOnPath: json['textOnPath'] as bool? ?? false,
         textPathOffset: (json['textPathOffset'] as num?)?.toDouble() ?? 0.0,
+        fillPattern: json['fillPattern'] != null
+            ? PatternSpec.fromJson(
+                (json['fillPattern'] as Map).cast<String, dynamic>())
+            : null,
       );
 
   /// Text laid out along this drawable's path instead of at one anchor.
@@ -651,6 +666,9 @@ class Drawable {
 
   void _drawFillSpans(Canvas canvas) {
     final spans = fillSpans!;
+    final pattern = fillPattern;
+    if (pattern != null && _drawPatternSpans(canvas, spans, pattern)) return;
+
     // Spans are [y, x0, x1, alpha, …]; full-alpha runs share one paint,
     // feathered runs (anti-aliased edge) get their own alpha.
     Paint? solid;
@@ -675,6 +693,69 @@ class Drawable {
         );
       }
     }
+  }
+
+  /// Paints a pattern fill. Returns false when the tile is not decoded yet so
+  /// the caller can fall back to the flat ink colour.
+  ///
+  /// The shader is anchored in canvas space, so tiles line up across the whole
+  /// filled region instead of restarting at every span. Regions with a
+  /// feathered edge are painted span by span to keep the anti-aliasing.
+  bool _drawPatternSpans(Canvas canvas, List<int> spans, PatternSpec pattern) {
+    var minX = double.infinity;
+    var minY = double.infinity;
+    var maxX = double.negativeInfinity;
+    var maxY = double.negativeInfinity;
+    var feathered = false;
+    for (int i = 0; i + 3 < spans.length; i += 4) {
+      final y = spans[i].toDouble();
+      final x0 = spans[i + 1].toDouble();
+      final x1 = spans[i + 2].toDouble();
+      if (spans[i + 3] < 250) feathered = true;
+      minX = min(minX, x0);
+      minY = min(minY, y);
+      maxX = max(maxX, x1 + 1.0);
+      maxY = max(maxY, y + 1.0);
+    }
+    if (minX > maxX) return false;
+    final bounds = Rect.fromLTRB(minX, minY, maxX, maxY);
+    final shader = PatternRenderer.shaderFor(pattern, center: bounds.center);
+    if (shader == null) return false;
+
+    if (!feathered) {
+      final region = ui.Path();
+      for (int i = 0; i + 3 < spans.length; i += 4) {
+        final y = spans[i].toDouble();
+        final x0 = spans[i + 1].toDouble();
+        final x1 = spans[i + 2].toDouble();
+        region.addRect(Rect.fromLTRB(x0, y, x1 + 1.0, y + 1.0));
+      }
+      canvas.save();
+      canvas.clipPath(region);
+      canvas.drawRect(
+        bounds,
+        Paint()
+          ..shader = shader
+          ..color = Colors.white.withValues(alpha: opacity),
+      );
+      canvas.restore();
+      return true;
+    }
+
+    for (int i = 0; i + 3 < spans.length; i += 4) {
+      final y = spans[i].toDouble();
+      final x0 = spans[i + 1].toDouble();
+      final x1 = spans[i + 2].toDouble();
+      final a = spans[i + 3];
+      if (a <= 0) continue;
+      canvas.drawRect(
+        Rect.fromLTRB(x0, y, x1 + 1.0, y + 1.0),
+        Paint()
+          ..shader = shader
+          ..color = Colors.white.withValues(alpha: opacity * (a / 255.0)),
+      );
+    }
+    return true;
   }
 
   void _drawLeaves(Canvas canvas, Paint paint) {

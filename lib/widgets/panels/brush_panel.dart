@@ -3,6 +3,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:provider/provider.dart';
 import '../../providers/tool_provider.dart';
 import '../../models/brush.dart';
+import 'brush_preset_section.dart';
 
 class BrushPanel extends StatelessWidget {
   const BrushPanel({super.key});
@@ -43,6 +44,8 @@ class BrushPanel extends StatelessWidget {
                 _sliderRow('brush.opacity'.tr(), provider.brushOpacity, 0, 1,
                     (v) => provider.setBrushOpacity(v),
                     '${(provider.brushOpacity * 100).round()}%'),
+                const Divider(height: 10),
+                const BrushPresetSection(),
               ],
             ),
           ),
