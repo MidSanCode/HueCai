@@ -21,6 +21,9 @@ import '../../services/image_filters.dart';
 import '../../services/pattern_renderer.dart';
 import '../../utils/logger.dart';
 import '../dialogs/text_input_dialog.dart';
+import 'brush_hud.dart';
+import 'overview_map.dart';
+import 'snapshot_compare_overlay.dart';
 
 class PaintCanvas extends StatefulWidget {
   final Project project;
@@ -125,6 +128,22 @@ class _PaintCanvasState extends State<PaintCanvas> {
   // Text tool in "along a path" mode: the baseline being dragged out.
   Offset? _textPathStart;
   Offset? _textPathEnd;
+
+  // Brush HUD (roadmap item 17): long-pressing a paint tool shows an on-canvas
+  // size/opacity control; the drag is measured from the press point.
+  Offset? _hudPos;
+  Offset? _hudOrigin;
+  double? _hudStartSize;
+  double? _hudStartOpacity;
+
+  /// Tools the HUD makes sense for (anything that paints with the brush).
+  static const Set<ToolType> _hudTools = {
+    ToolType.brush,
+    ToolType.eraser,
+    ToolType.smudge,
+    ToolType.willowLeaf,
+    ToolType.liquify,
+  };
 
   // Move-tool editing of the selected drawable:
   // 0 = none, 1 = translate, 2..5 = corner scale (text), 6 = rotate (text).
@@ -2633,11 +2652,53 @@ class _PaintCanvasState extends State<PaintCanvas> {
     }
   }
 
+  // ─── Brush HUD (roadmap item 17) ─────────────────────────────
+
+  /// Long press on a paint tool opens the HUD instead of starting a stroke:
+  /// a stationary press has no stroke to lose, and the drag that follows
+  /// adjusts the brush rather than painting.
+  void _onHudStart(Offset local) {
+    if (!context.read<AppSettings>().brushHudEnabled) return;
+    final tp = context.read<ToolProvider>();
+    if (!_hudTools.contains(tp.currentTool)) return;
+    setState(() {
+      _hudPos = local;
+      _hudOrigin = local;
+      _hudStartSize = tp.brushSize;
+      _hudStartOpacity = tp.brushOpacity;
+    });
+  }
+
+  void _onHudUpdate(Offset local) {
+    final origin = _hudOrigin;
+    final startSize = _hudStartSize;
+    final startOpacity = _hudStartOpacity;
+    if (origin == null || startSize == null || startOpacity == null) return;
+    final tp = context.read<ToolProvider>();
+    final delta = local - origin;
+    // Horizontal drag: 1px ≈ 0.5px of brush size. Vertical drag: 200px covers
+    // the full opacity range.
+    tp.setBrushSize(startSize + delta.dx * 0.5);
+    tp.setBrushOpacity(startOpacity - delta.dy / 200.0);
+    setState(() => _hudPos = local);
+  }
+
+  void _onHudEnd() {
+    if (_hudPos == null) return;
+    setState(() {
+      _hudPos = null;
+      _hudOrigin = null;
+      _hudStartSize = null;
+      _hudStartOpacity = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final tp = context.watch<ToolProvider>();
     final cp = context.watch<CanvasProvider>();
     final pp = context.watch<ProjectProvider>();
+    final as = context.watch<AppSettings>();
     // Fire-and-forget: refresh per-layer raster caches for any layer whose
     // content changed since its last rasterization.
     _updateLayerRasters();
@@ -2660,7 +2721,22 @@ class _PaintCanvasState extends State<PaintCanvas> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final areaSize = Size(constraints.maxWidth, constraints.maxHeight);
-        return Listener(
+        // The overview navigator needs the viewport size to know what part of
+        // the canvas is on screen; report it once per layout change.
+        if (cp.viewportSize != areaSize) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              context.read<CanvasProvider>().setViewportSize(areaSize);
+            }
+          });
+        }
+        // Overlays (brush HUD, overview navigator, snapshot comparison) sit
+        // above the canvas as Stack siblings so their gestures never race the
+        // canvas's own pan/zoom recognisers.
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Listener(
           onPointerMove: (event) {
             _currentPressure = event.pressure;
           },
@@ -2707,6 +2783,10 @@ class _PaintCanvasState extends State<PaintCanvas> {
             }
           },
           child: GestureDetector(
+            onLongPressStart: (d) => _onHudStart(d.localPosition),
+            onLongPressMoveUpdate: (d) => _onHudUpdate(d.localPosition),
+            onLongPressEnd: (_) => _onHudEnd(),
+            onLongPressCancel: _onHudEnd,
             onScaleStart: (details) {
               if (details.pointerCount >= 2) {
                 _isScaling = true;
@@ -2870,7 +2950,25 @@ class _PaintCanvasState extends State<PaintCanvas> {
                 ),
               ),
             ),
-          ),
+            ),
+            ),
+            if (_hudPos != null)
+              BrushHud(
+                position: _hudPos!,
+                brushSize: tp.brushSize,
+                opacity: tp.brushOpacity,
+                viewScale: cp.scale,
+                color: tp.primaryColor,
+              ),
+            if (as.overviewEnabled)
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: OverviewMap(viewportSize: areaSize),
+              ),
+            if (pp.comparisonActive)
+              SnapshotCompareOverlay(viewportSize: areaSize),
+          ],
         );
       },
     );

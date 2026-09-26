@@ -5,14 +5,27 @@ import 'package:flutter/gestures.dart';
 import 'dart:ui' as ui;
 import 'dart:io';
 
+import '../services/view_transform.dart';
+
 class CanvasProvider extends ChangeNotifier {
   Offset _offset = Offset.zero;
   double _scale = 1.0;
   double _rotation = 0.0;
 
+  /// Size of the canvas viewport (the paint area), reported by the canvas
+  /// widget so the overview navigator can work out what is on screen.
+  Size _viewportSize = Size.zero;
+
   Offset get offset => _offset;
   double get scale => _scale;
   double get rotation => _rotation;
+  Size get viewportSize => _viewportSize;
+
+  void setViewportSize(Size size) {
+    if (size == _viewportSize) return;
+    _viewportSize = size;
+    notifyListeners();
+  }
 
   ui.Image? _referenceImage;
   String _referencePath = '';
@@ -153,6 +166,30 @@ class CanvasProvider extends ChangeNotifier {
     _offset = Offset.zero;
     _scale = 1.0;
     _rotation = 0.0;
+    notifyListeners();
+  }
+
+  /// Scrolls so [canvasPoint] sits at the centre of the viewport, keeping the
+  /// current zoom and rotation. Used by the overview navigator.
+  void centerOnCanvasPoint(Offset canvasPoint, Size canvasSize) {
+    final transform = ViewTransform(
+      offset: _offset,
+      scale: _scale,
+      rotation: _rotation,
+      canvasSize: canvasSize,
+      areaSize: _viewportSize,
+    );
+    _offset = transform.offsetToCenter(canvasPoint);
+    notifyListeners();
+  }
+
+  /// Sets an absolute zoom level, keeping the viewport centre fixed.
+  void zoomTo(double scale) {
+    final target = scale.clamp(0.1, 10.0);
+    if (target == _scale) return;
+    final ratio = target / _scale;
+    _offset = _offset * ratio;
+    _scale = target;
     notifyListeners();
   }
 }

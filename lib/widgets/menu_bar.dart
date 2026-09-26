@@ -39,6 +39,7 @@ class _FullMenuBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final as = context.watch<AppSettings>();
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -110,6 +111,35 @@ class _FullMenuBar extends StatelessWidget {
             }),
             _MenuItem('menu.view.actual_size'.tr(), Icons.image_aspect_ratio,
                 context.read<CanvasProvider>().resetView),
+            const _MenuDivider(),
+            // Interface extras (roadmap item 17). The toggles read the live
+            // settings so the check marks track the current state.
+            _MenuItem(
+              'menu.view.overview'.tr(),
+              Icons.map,
+              () => context
+                  .read<AppSettings>()
+                  .setOverviewEnabled(!as.overviewEnabled),
+              checked: as.overviewEnabled,
+            ),
+            _MenuItem(
+              'menu.view.brush_hud'.tr(),
+              Icons.gesture,
+              () => context
+                  .read<AppSettings>()
+                  .setBrushHudEnabled(!as.brushHudEnabled),
+              checked: as.brushHudEnabled,
+            ),
+            _MenuItem(
+              'menu.view.touch_panel'.tr(),
+              Icons.touch_app,
+              () => context
+                  .read<AppSettings>()
+                  .setTouchPanelEnabled(!as.touchPanelEnabled),
+              checked: as.touchPanelEnabled,
+            ),
+            _MenuItem('menu.view.snapshot_compare'.tr(), Icons.compare,
+                () => context.read<ProjectProvider>().toggleComparison()),
           ]),
           _MenuButton(label: 'menu.image'.tr(), children: [
             _MenuItem.disabled('menu.image.flip_h'.tr(), Icons.flip),

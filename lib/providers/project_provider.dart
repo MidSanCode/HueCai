@@ -1705,6 +1705,56 @@ class ProjectProvider extends ChangeNotifier {
     return completer.future;
   }
 
+  // ─── Snapshot comparison (roadmap item 17) ───────────────────
+  //
+  // A frozen flatten of the artwork kept aside so the artist can flip between
+  // "before" and "now" while painting. It is deliberately not part of the
+  // undo history: taking a comparison snapshot must never be undoable.
+
+  ui.Image? _comparisonSnapshot;
+  bool _comparisonActive = false;
+
+  ui.Image? get comparisonSnapshot => _comparisonSnapshot;
+  bool get comparisonActive => _comparisonActive;
+
+  /// Freezes the current artwork as the comparison reference and opens the
+  /// comparison overlay.
+  Future<void> startComparison() async {
+    if (_currentProject == null) return;
+    try {
+      _comparisonSnapshot = await rasterizeCanvas();
+    } catch (_) {
+      _comparisonSnapshot = null;
+    }
+    _comparisonActive = _comparisonSnapshot != null;
+    notifyListeners();
+  }
+
+  /// Replaces the reference with the current artwork (keeps the overlay open).
+  Future<void> recaptureComparison() async {
+    if (_currentProject == null || !_comparisonActive) return;
+    try {
+      _comparisonSnapshot = await rasterizeCanvas();
+    } catch (_) {
+      _comparisonSnapshot = null;
+    }
+    notifyListeners();
+  }
+
+  void stopComparison() {
+    if (!_comparisonActive) return;
+    _comparisonActive = false;
+    notifyListeners();
+  }
+
+  void toggleComparison() {
+    if (_comparisonActive) {
+      stopComparison();
+    } else {
+      startComparison();
+    }
+  }
+
   void updateSelectionEditTransform({
     double? scaleX, double? scaleY,
     double? rotate,

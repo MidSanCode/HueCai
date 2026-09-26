@@ -8,6 +8,7 @@ import '../providers/project_provider.dart';
 import '../models/project.dart';
 import '../providers/tool_provider.dart';
 import '../providers/canvas_provider.dart';
+import '../providers/app_settings.dart';
 import '../widgets/menu_bar.dart';
 import '../widgets/tools/tool_panel.dart';
 import '../widgets/tools/image_edit_toolbar.dart';
@@ -19,6 +20,7 @@ import '../widgets/panels/timeline_panel.dart';
 import '../widgets/canvas/paint_canvas.dart';
 import '../widgets/canvas/reference_floating_window.dart';
 import '../widgets/canvas/canvas_zoom_overlay.dart';
+import '../widgets/tools/touch_panel.dart';
 import '../widgets/dialogs/brush_editor_dialog.dart';
 import '../widgets/dialogs/unsaved_changes.dart';
 import '../widgets/selection_panel.dart';
@@ -425,6 +427,10 @@ class _WideLayoutState extends State<_WideLayout> {
           const SelectionPanel(),
           const ReferenceFloatingWindow(),
           const CanvasZoomOverlay(),
+          // Touch-first floating panel (roadmap item 17), toggled from the
+          // view menu.
+          if (context.watch<AppSettings>().touchPanelEnabled)
+            const TouchPanel(),
         ],
       ))),
       const TimelinePanel(),
@@ -464,6 +470,10 @@ class _NarrowLayout extends StatelessWidget {
           const SelectionPanel(),
           const ReferenceFloatingWindow(),
           const CanvasZoomOverlay(),
+          // Touch-first floating panel (roadmap item 17), toggled from the
+          // view menu.
+          if (context.watch<AppSettings>().touchPanelEnabled)
+            const TouchPanel(),
         ],
       ))),
       const TimelinePanel(),

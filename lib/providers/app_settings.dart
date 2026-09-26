@@ -48,6 +48,12 @@ class AppSettings extends ChangeNotifier {
   bool _fillWithPattern = false;
   String? _activePatternId;
 
+  // Interface (roadmap item 17): on-canvas brush HUD, overview navigator and
+  // the touch-first floating panel.
+  bool _brushHudEnabled = true;
+  bool _overviewEnabled = true;
+  bool _touchPanelEnabled = false;
+
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
   double get stabilizer => _stabilizer;
@@ -161,6 +167,9 @@ class AppSettings extends ChangeNotifier {
         }
         _fillWithPattern = json['fillWithPattern'] as bool? ?? false;
         _activePatternId = json['activePatternId'] as String?;
+        _brushHudEnabled = json['brushHudEnabled'] as bool? ?? true;
+        _overviewEnabled = json['overviewEnabled'] as bool? ?? true;
+        _touchPanelEnabled = json['touchPanelEnabled'] as bool? ?? false;
         notifyListeners();
       }
     } catch (_) {}
@@ -194,6 +203,9 @@ class AppSettings extends ChangeNotifier {
         'brushPresets': _brushPresets.map((p) => p.toJson()).toList(),
         'patterns': _patterns.map((p) => p.toJson()).toList(),
         'fillWithPattern': _fillWithPattern,
+        'brushHudEnabled': _brushHudEnabled,
+        'overviewEnabled': _overviewEnabled,
+        'touchPanelEnabled': _touchPanelEnabled,
         'activePatternId': _activePatternId,
       }));
     } catch (_) {}
@@ -384,6 +396,33 @@ class AppSettings extends ChangeNotifier {
 
   void setFillWithPattern(bool v) {
     _fillWithPattern = v;
+    _save();
+    notifyListeners();
+  }
+
+  /// On-canvas brush HUD (long-press a paint tool to adjust size/opacity).
+  bool get brushHudEnabled => _brushHudEnabled;
+
+  void setBrushHudEnabled(bool v) {
+    _brushHudEnabled = v;
+    _save();
+    notifyListeners();
+  }
+
+  /// Overview navigator (minimap) in the corner of the canvas.
+  bool get overviewEnabled => _overviewEnabled;
+
+  void setOverviewEnabled(bool v) {
+    _overviewEnabled = v;
+    _save();
+    notifyListeners();
+  }
+
+  /// Touch-first floating panel with large controls.
+  bool get touchPanelEnabled => _touchPanelEnabled;
+
+  void setTouchPanelEnabled(bool v) {
+    _touchPanelEnabled = v;
     _save();
     notifyListeners();
   }

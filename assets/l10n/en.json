@@ -521,5 +521,22 @@
   "pattern.cross": "Cross hatch",
   "pattern.grid": "Grid",
   "pattern.noise": "Noise",
-  "pattern.paper": "Paper"
+  "pattern.paper": "Paper",
+  "menu.view.overview": "Overview navigator",
+  "menu.view.brush_hud": "Brush HUD",
+  "menu.view.touch_panel": "Touch panel",
+  "menu.view.snapshot_compare": "Snapshot compare",
+  "hud.hint": "Drag left/right for size · up/down for opacity",
+  "overview.refresh": "Refresh thumbnail",
+  "snapshot.before": "Snapshot",
+  "snapshot.now": "Current",
+  "snapshot.mode_split": "Split compare",
+  "snapshot.mode_difference": "Difference",
+  "snapshot.recapture": "Replace snapshot with current artwork",
+  "snapshot.close": "Close compare",
+  "snapshot.difference_hint": "Black is unchanged, bright is different (refresh to update)",
+  "touch.panel": "Touch panel",
+  "touch.close": "Close touch panel",
+  "touch.size": "Brush size",
+  "touch.opacity": "Opacity"
 }

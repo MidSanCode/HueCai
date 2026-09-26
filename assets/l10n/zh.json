@@ -521,5 +521,22 @@
   "pattern.cross": "交叉线",
   "pattern.grid": "网格",
   "pattern.noise": "噪点",
-  "pattern.paper": "纸纹"
+  "pattern.paper": "纸纹",
+  "menu.view.overview": "概览导航",
+  "menu.view.brush_hud": "笔刷悬浮调节",
+  "menu.view.touch_panel": "触控面板",
+  "menu.view.snapshot_compare": "快照对比",
+  "hud.hint": "左右拖动改大小 · 上下拖动改不透明度",
+  "overview.refresh": "刷新缩略图",
+  "snapshot.before": "快照",
+  "snapshot.now": "当前",
+  "snapshot.mode_split": "分割对比",
+  "snapshot.mode_difference": "差异模式",
+  "snapshot.recapture": "以当前画面更新快照",
+  "snapshot.close": "关闭对比",
+  "snapshot.difference_hint": "黑色为未改动，亮色为差异（按刷新更新）",
+  "touch.panel": "触控面板",
+  "touch.close": "关闭触控面板",
+  "touch.size": "笔刷大小",
+  "touch.opacity": "不透明度"
 }
