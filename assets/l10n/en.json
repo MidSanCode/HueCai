@@ -538,5 +538,16 @@
   "touch.panel": "Touch panel",
   "touch.close": "Close touch panel",
   "touch.size": "Brush size",
-  "touch.opacity": "Opacity"
+  "touch.opacity": "Opacity",
+  "menu.tool.script": "Script console",
+  "script.title": "Script console",
+  "script.run": "Run",
+  "script.save": "Save script",
+  "script.load": "Load script",
+  "script.saved": "Script saved",
+  "script.loaded": "Script loaded",
+  "script.io_error": "File read/write failed",
+  "script.done": "Added {n} shapes (undoable as one step)",
+  "script.help_title": "Command reference",
+  "script.help_body": "# comment　var name = number　layer name\nrepeat count { … } ($i and $vars usable inside)\nrect x,y,w,h color [stroke]\nellipse x,y,w,h color [stroke]\nline x1,y1,x2,y2 color [width]\npoly x1,y1 x2,y2 … color\ndot x,y color [radius]\ntext x,y text [color] [fontSize]\ngrid cols,rows,w,h,gap color\nColors: #RRGGBB, #AARRGGBB or black/red/…"
 }

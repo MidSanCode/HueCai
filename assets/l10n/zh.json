@@ -538,5 +538,16 @@
   "touch.panel": "触控面板",
   "touch.close": "关闭触控面板",
   "touch.size": "笔刷大小",
-  "touch.opacity": "不透明度"
+  "touch.opacity": "不透明度",
+  "menu.tool.script": "脚本控制台",
+  "script.title": "脚本控制台",
+  "script.run": "运行",
+  "script.save": "保存脚本",
+  "script.load": "加载脚本",
+  "script.saved": "脚本已保存",
+  "script.loaded": "脚本已加载",
+  "script.io_error": "文件读写失败",
+  "script.done": "已添加 {n} 个图形（整体可撤销）",
+  "script.help_title": "命令速查",
+  "script.help_body": "# 注释　var 名 = 数字　layer 名称\nrepeat 次数 { … }（循环内可用 $i 和 $变量名）\nrect x,y,w,h 颜色 [描边]\nellipse x,y,w,h 颜色 [描边]\nline x1,y1,x2,y2 颜色 [宽度]\npoly x1,y1 x2,y2 … 颜色\ndot x,y 颜色 [半径]\ntext x,y 文本 [颜色] [字号]\ngrid 列,行,宽,高,间距 颜色\n颜色：#RRGGBB、#AARRGGBB 或 black/red/…"
 }

@@ -16,6 +16,7 @@ import '../screens/settings_screen.dart';
 import '../screens/editor_screen.dart';
 import 'dialogs/brush_editor_dialog.dart';
 import 'dialogs/filter_dialog.dart';
+import 'dialogs/script_console_dialog.dart';
 import 'dialogs/unsaved_changes.dart';
 
 class EditorMenuBar extends StatelessWidget {
@@ -269,6 +270,10 @@ class _FullMenuBar extends StatelessWidget {
                 checked: context.watch<ToolProvider>().rulerSnapEnabled),
             _MenuItem('ruler.clear'.tr(), Icons.delete_sweep,
                 () => context.read<ToolProvider>().clearRulers()),
+            const _MenuDivider(),
+            // Scripting (roadmap item 18): sandboxed drawing scripts.
+            _MenuItem('menu.tool.script'.tr(), Icons.terminal,
+                () => showScriptConsole(context)),
           ]),
           _MenuButton(label: 'menu.settings'.tr(), children: [
             _MenuItem('menu.settings.brush'.tr(), Icons.brush, () {
