@@ -461,6 +461,53 @@ class ProjectProvider extends ChangeNotifier {
     _markChanged();
   }
 
+  /// Creates an empty **vector** layer above the current one. Vector layers
+  /// carry a flag that marks them as resolution-independent content; raster
+  /// operations ask before flattening them.
+  void addVectorLayer({String? name}) {
+    addLayer(
+      name: name ??
+          'layer.vector_default_name'.tr(
+            namedArgs: {'n': '${(_currentProject?.layers.length ?? 0) + 1}'},
+          ),
+    );
+    final layer = _currentProject?.currentLayer;
+    if (layer != null) {
+      layer.isVector = true;
+      _markChanged();
+    }
+  }
+
+  /// Whether the layer at [index] is a vector layer.
+  bool isVectorLayer(int index) {
+    final project = _currentProject;
+    if (project == null || index < 0 || index >= project.layers.length) {
+      return false;
+    }
+    return project.layers[index].isVector;
+  }
+
+  /// Flattens a vector layer to painted pixels by clearing its vector flag.
+  /// Returns true when the flag actually changed.
+  bool rasterizeVectorFlag(int index) {
+    if (!isVectorLayer(index)) return false;
+    _currentProject!.layers[index].isVector = false;
+    _markChanged();
+    return true;
+  }
+
+  /// Toggles the vector-layer flag on the layer at [index]. The flag is a
+  /// semantic marker: turning it off means "this layer is painted pixels".
+  void setLayerVector(int index, bool value) {
+    if (_currentProject == null ||
+        index < 0 ||
+        index >= _currentProject!.layers.length) {
+      return;
+    }
+    _currentProject!.layers[index].isVector = value;
+    _markChanged();
+  }
+
   void deleteLayer(int index) {
     if (_currentProject == null || _currentProject!.layers.length <= 1) return;
     _currentProject!.layers.removeAt(index);
@@ -670,6 +717,9 @@ class ProjectProvider extends ChangeNotifier {
     layer.imageFlipH = false;
     layer.imageFlipV = false;
     layer.drawables = [];
+    // The filter baked the layer's vector content into pixels, so the layer
+    // stops being a vector layer. Callers that care warn the user first.
+    layer.isVector = false;
     layer.imageVersion++;
     _markChanged();
     return true;
@@ -1133,6 +1183,26 @@ class ProjectProvider extends ChangeNotifier {
       for (final d in layer.drawables) {
         if (d.selected) return d;
       }
+    }
+    return null;
+  }
+
+  /// Looks a drawable up by id across every layer.
+  Drawable? findDrawable(String id) {
+    if (_currentProject == null) return null;
+    for (final layer in _currentProject!.layers) {
+      for (final d in layer.drawables) {
+        if (d.id == id) return d;
+      }
+    }
+    return null;
+  }
+
+  /// The layer containing [drawableId], or null when it is not in the stack.
+  Layer? layerOfDrawable(String drawableId) {
+    if (_currentProject == null) return null;
+    for (final layer in _currentProject!.layers) {
+      if (layer.drawables.any((d) => d.id == drawableId)) return layer;
     }
     return null;
   }

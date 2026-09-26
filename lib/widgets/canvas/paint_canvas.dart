@@ -116,6 +116,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
   // Curve tool: desktop-hover preview of a mid-segment insertion point.
   Offset? _curveHoverInsert;
 
+  // Path editor: node/tangent being dragged, plus the hovered segment where a
+  // click would insert a new node.
+  ({String drawableId, int index, bool handle})? _pathEditDrag;
+  (int, Offset)? _pathHoverInsert;
+
+  // Text tool in "along a path" mode: the baseline being dragged out.
+  Offset? _textPathStart;
+  Offset? _textPathEnd;
+
   // Move-tool editing of the selected drawable:
   // 0 = none, 1 = translate, 2..5 = corner scale (text), 6 = rotate (text).
   int _selDragMode = 0;
@@ -1001,11 +1010,17 @@ class _PaintCanvasState extends State<PaintCanvas> {
 
     if (tp.currentTool == ToolType.text) {
       // PS-like text tool: pick the anchor, type the text, commit a text
-      // drawable that can be moved with the move tool later.
+      // drawable that can be moved with the move tool later. In "along a
+      // path" mode a drag first defines the baseline.
       if (!_isOnCanvas(canvasPos)) return;
       final layer = widget.project.layers[widget.project.currentLayerIndex
           .clamp(0, widget.project.layers.length - 1)];
       if (layer.locked) return;
+      if (tp.textOnPath) {
+        _textPathStart = canvasPos;
+        _textPathEnd = canvasPos;
+        return;
+      }
       await _promptTextAndPlace(canvasPos, pp, tp);
       return;
     }
@@ -1021,6 +1036,12 @@ class _PaintCanvasState extends State<PaintCanvas> {
     if (tp.currentTool == ToolType.shape &&
         tp.currentShape == ShapeType.curve) {
       _handleCurveDown(canvasPos, pp, tp);
+      return;
+    }
+
+    // Path editor: node/handle dragging, node insertion, path selection.
+    if (tp.currentTool == ToolType.pathEdit) {
+      _handlePathEditDown(canvasPos, pp, tp);
       return;
     }
 
@@ -1329,6 +1350,194 @@ class _PaintCanvasState extends State<PaintCanvas> {
     pp.refresh();
   }
 
+  /// Node editor: anchors first, then tangent handles, then segment
+  /// insertion, then path selection. Runs with the path-edit tool only.
+  void _handlePathEditDown(Offset p, ProjectProvider pp, ToolProvider tp) {
+    final viewScale = context.read<CanvasProvider>().scale;
+    final project = widget.project;
+    if (project.layers.isEmpty) return;
+    final layer =
+        project.layers[project.currentLayerIndex.clamp(0, project.layers.length - 1)];
+    if (layer.locked) return;
+
+    // Prefer the selected path, then any path/vetor object under the cursor.
+    var target = pp.selectedDrawable;
+    if (target != null && !_isEditablePath(target)) target = null;
+    target ??= _pathAt(p, pp, viewScale);
+
+    if (target == null) {
+      pp.clearSelection();
+      _pathEditDrag = null;
+      _pathHoverInsert = null;
+      pp.refresh();
+      return;
+    }
+
+    if (!target.selected) pp.selectDrawable(target);
+
+    final anchor = _pathAnchorHit(p, target, viewScale);
+    if (anchor >= 0) {
+      pp.saveSnapshot();
+      _pathEditDrag = (drawableId: target.id, index: anchor, handle: false);
+      _pathHoverInsert = null;
+      pp.refresh();
+      return;
+    }
+
+    final handle = _pathHandleHit(p, target, viewScale);
+    if (handle >= 0) {
+      pp.saveSnapshot();
+      _pathEditDrag = (drawableId: target.id, index: handle, handle: true);
+      _pathHoverInsert = null;
+      pp.refresh();
+      return;
+    }
+
+    final seg = _pathSegmentHit(p, target, viewScale);
+    if (seg != null) {
+      pp.saveSnapshot();
+      // Keep curveHandles parallel to points while inserting.
+      final insertAt = seg.$1;
+      final oldLength = target.points.length;
+      final handles = target.curveHandles;
+      if (handles != null) {
+        while (handles.length < oldLength) {
+          handles.add(null);
+        }
+        handles.insert(insertAt.clamp(0, handles.length), null);
+      }
+      target.points.insert(insertAt, seg.$2);
+      target.contentVersion++;
+      pp.updateDrawable(target.id, target);
+      _pathHoverInsert = null;
+      pp.refresh();
+      return;
+    }
+
+    _pathEditDrag = null;
+    pp.refresh();
+  }
+
+  bool _isEditablePath(Drawable d) =>
+      d.shapeType == ShapeType.path || d.textOnPath;
+
+  /// Topmost editable path whose outline or anchors are within tolerance.
+  Drawable? _pathAt(Offset p, ProjectProvider pp, double viewScale) {
+    final project = widget.project;
+    if (project.layers.isEmpty) return null;
+    final layer =
+        project.layers[project.currentLayerIndex.clamp(0, project.layers.length - 1)];
+    for (final d in layer.drawables.reversed) {
+      if (!_isEditablePath(d)) continue;
+      if (_pathAnchorHit(p, d, viewScale) >= 0) return d;
+      if (_pathHandleHit(p, d, viewScale) >= 0) return d;
+      if (_pathSegmentHit(p, d, viewScale) != null) return d;
+    }
+    return null;
+  }
+
+  double _pathHitTolerance(double viewScale) => 10.0 / viewScale;
+
+  int _pathAnchorHit(Offset p, Drawable d, double viewScale) {
+    final tol = _pathHitTolerance(viewScale);
+    for (var i = 0; i < d.points.length; i++) {
+      if ((p - d.points[i]).distance <= tol) return i;
+    }
+    return -1;
+  }
+
+  int _pathHandleHit(Offset p, Drawable d, double viewScale) {
+    final handles = d.curveHandles;
+    if (handles == null) return -1;
+    final tol = _pathHitTolerance(viewScale);
+    for (var i = 0; i < handles.length && i < d.points.length; i++) {
+      final h = handles[i];
+      if (h != null && (p - h).distance <= tol) return i;
+    }
+    return -1;
+  }
+
+  /// Index + projected position of the segment under [p] (null when none).
+  /// Uses the real bézier geometry, so curved segments hit-test correctly.
+  (int, Offset)? _pathSegmentHit(Offset p, Drawable d, double viewScale) {
+    if (d.points.length < 2) return null;
+    final tol = _pathHitTolerance(viewScale) * 1.6;
+    final segments = d.pathClosed && d.points.length >= 3
+        ? d.points.length
+        : d.points.length - 1;
+    for (var i = 1; i <= segments; i++) {
+      final from = i - 1;
+      final to = d.pathClosed && i == d.points.length ? 0 : i;
+      final prev = d.points[from];
+      final cur = d.points[to];
+      final hPrev = d.handleAt(from);
+      final hCur = d.handleAt(to);
+      final samples = (hPrev == null && hCur == null) ? 1 : 12;
+      var best = prev;
+      var bestDist = double.infinity;
+      for (var s = 0; s <= samples; s++) {
+        final t = s / samples;
+        final pt = (hPrev == null && hCur == null)
+            ? Offset.lerp(prev, cur, t)!
+            : _cubicAt(
+                prev,
+                hPrev ?? Offset.lerp(prev, cur, 1.0 / 3.0)!,
+                hCur ?? Offset.lerp(prev, cur, 2.0 / 3.0)!,
+                cur,
+                t,
+              );
+        final dist = (p - pt).distance;
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = pt;
+        }
+      }
+      if (bestDist <= tol) {
+        // Insert after the segment's start anchor.
+        return (i, best);
+      }
+    }
+    return null;
+  }
+
+  static Offset _cubicAt(Offset p0, Offset p1, Offset p2, Offset p3, double t) {
+    final mt = 1 - t;
+    final a = mt * mt * mt;
+    final b = 3 * mt * mt * t;
+    final c = 3 * mt * t * t;
+    final d = t * t * t;
+    return Offset(
+      a * p0.dx + b * p1.dx + c * p2.dx + d * p3.dx,
+      a * p0.dy + b * p1.dy + c * p2.dy + d * p3.dy,
+    );
+  }
+
+  void _onPathEditMove(Offset canvasPos, ProjectProvider pp) {
+    final drag = _pathEditDrag;
+    if (drag == null) return;
+    final d = pp.findDrawable(drag.drawableId);
+    if (d == null) return;
+    if (drag.handle) {
+      while (d.curveHandles != null && d.curveHandles!.length < d.points.length) {
+        d.curveHandles!.add(null);
+      }
+      if (d.curveHandles != null && drag.index < d.curveHandles!.length) {
+        d.curveHandles![drag.index] = canvasPos;
+      }
+    } else if (drag.index < d.points.length) {
+      final delta = canvasPos - d.points[drag.index];
+      d.points[drag.index] = canvasPos;
+      // A smooth node's tangent follows its anchor.
+      final h = d.handleAt(drag.index);
+      if (h != null && d.curveHandles != null &&
+          drag.index < d.curveHandles!.length) {
+        d.curveHandles![drag.index] = h + delta;
+      }
+    }
+    d.contentVersion++;
+    pp.updateDrawableSilent(d.id, d);
+  }
+
   /// 1 = confirm, 2 = remove last, 0 = none.
   int _curveButtonHit(Offset p, Drawable d, double viewScale) {
     if (d.points.isEmpty) return 0;
@@ -1488,6 +1697,43 @@ class _PaintCanvasState extends State<PaintCanvas> {
       }
     }
     return null;
+  }
+
+  /// Text-on-path: commits a text object whose baseline is the dragged
+  /// segment, then lets the path editor reshape that baseline.
+  Future<void> _promptTextOnPath(
+      Offset start, Offset end, ProjectProvider pp, ToolProvider tp) async {
+    final result = await showTextInputDialog(
+      context,
+      initialFontFamily: tp.textFontFamily,
+    );
+    if (result == null || result.text.trim().isEmpty) return;
+    if (!mounted) return;
+    tp.setTextFontFamily(result.fontFamily);
+    pp.saveSnapshot();
+    // A tap (no real drag) still needs a baseline: 240px to the right.
+    final baselineEnd = (end - start).distance < 8
+        ? start + const Offset(240, 0)
+        : end;
+    final drawable = Drawable(
+      id: const Uuid().v4(),
+      isShape: true,
+      shapeType: ShapeType.path,
+      points: [start, baselineEnd],
+      curveHandles: [null, null],
+      pathClosed: false,
+      color: tp.primaryColor,
+      opacity: 1.0,
+      strokeWidth: max(1.0, tp.brushSize * 0.4),
+      textData: result.text,
+      textOnPath: true,
+      textPathOffset: tp.textPathOffset,
+      fontSize: result.fontSize,
+      fontFamily: result.fontFamily,
+    );
+    pp.addDrawable(drawable);
+    pp.selectDrawable(drawable);
+    pp.refresh();
   }
 
   /// Text tool: ask for the string, then commit a text drawable anchored at
@@ -1838,6 +2084,21 @@ class _PaintCanvasState extends State<PaintCanvas> {
       return;
     }
 
+    // Path editor: dragging a node / tangent handle follows the pointer
+    // immediately (no drag threshold — the node is the feedback).
+    if (tp.currentTool == ToolType.pathEdit) {
+      if (_pathEditDrag != null) {
+        _onPathEditMove(canvasPos, pp);
+      }
+      return;
+    }
+
+    // Text-on-path: the drag defines the text baseline.
+    if (tp.currentTool == ToolType.text && _textPathStart != null) {
+      _textPathEnd = canvasPos;
+      return;
+    }
+
     // Move tool: selection editing > VP handles > drawable editing.
     if (tp.currentTool == ToolType.move) {
       if (pp.selectionPhase == SelectionPhase.editing) {
@@ -2178,6 +2439,26 @@ class _PaintCanvasState extends State<PaintCanvas> {
     final pp = context.read<ProjectProvider>();
     final tp = context.read<ToolProvider>();
 
+    // Text-on-path: the pointer-up closes the baseline and creates the text.
+    if (tp.currentTool == ToolType.text && _textPathStart != null) {
+      final start = _textPathStart!;
+      final end = _textPathEnd ?? start;
+      _textPathStart = null;
+      _textPathEnd = null;
+      _promptTextOnPath(start, end, pp, tp);
+      return;
+    }
+
+    // Path editor: a node/handle drag ends here; the edit itself was already
+    // applied live with raster-cache-busting silent updates.
+    if (tp.currentTool == ToolType.pathEdit) {
+      if (_pathEditDrag != null) {
+        _pathEditDrag = null;
+        pp.refresh();
+      }
+      return;
+    }
+
     // Liquify: bake (or cancel) the warp.
     if (tp.currentTool == ToolType.liquify) {
       _finishLiquify(pp);
@@ -2377,6 +2658,17 @@ class _PaintCanvasState extends State<PaintCanvas> {
           },
           onPointerHover: (event) {
             _currentPressure = event.pressure;
+            // Path editor: highlight the segment a click would split.
+            if (tp.currentTool == ToolType.pathEdit) {
+              final selected = context.read<ProjectProvider>().selectedDrawable;
+              final hit = (selected != null && _isEditablePath(selected))
+                  ? _pathSegmentHit(_toCanvas(event.position, areaSize),
+                      selected, context.read<CanvasProvider>().scale)
+                  : null;
+              final changed = hit?.$2 != _pathHoverInsert?.$2;
+              _pathHoverInsert = hit;
+              if (changed) setState(() {});
+            }
             // Curve tool: remember a mid-segment insertion candidate so the
             // painter can highlight it (desktop hover; touch gets it on tap).
             if (tp.currentTool == ToolType.shape &&
@@ -2534,6 +2826,15 @@ class _PaintCanvasState extends State<PaintCanvas> {
                           adjustmentImages: _adjustmentImages,
                           curveHoverInsert: _curveHoverInsert,
                           curvePlacing: _isPlacingShapePoints,
+                          pathEditDrawable: tp.currentTool == ToolType.pathEdit
+                              ? (pp.selectedDrawable != null &&
+                                      _isEditablePath(pp.selectedDrawable!)
+                                  ? pp.selectedDrawable
+                                  : null)
+                              : null,
+                          pathEditHover: tp.currentTool == ToolType.pathEdit
+                              ? _pathHoverInsert
+                              : null,
                           moveToolActive: isMoveTool,
                           selectionMaskImage: pp.selectionMaskImage,
                           selectionClipImage: pp.selectionClipImage,
@@ -2667,6 +2968,12 @@ class _CanvasPainter extends CustomPainter {
   /// Ghosted neighbouring animation frames (onion skin), drawn behind the
   /// current frame's content.
   final List<({AnimationFrame frame, bool before, double opacity})> onionSkin;
+
+  /// Path the node editor is currently editing (null when the tool is idle).
+  final Drawable? pathEditDrawable;
+
+  /// Segment insertion preview for the path editor: (index, position).
+  final (int, Offset)? pathEditHover;
   final Map<String, ui.Image> adjustmentImages;
   final bool curvePlacing;
   final Offset? curveHoverInsert;
@@ -2694,6 +3001,8 @@ class _CanvasPainter extends CustomPainter {
     this.perspectivePoints = const [],
     this.rulers = const [],
     this.onionSkin = const [],
+    this.pathEditDrawable,
+    this.pathEditHover,
     this.adjustmentImages = const {},
     this.curvePlacing = false,
     this.curveHoverInsert,
@@ -2918,6 +3227,66 @@ class _CanvasPainter extends CustomPainter {
               ..color = Colors.black.withValues(alpha: 0.8),
           );
         }
+      }
+    }
+
+    // Path editor overlay: node squares, tangent handles, insertion preview.
+    if (pathEditDrawable != null) {
+      final d = pathEditDrawable!;
+      const anchorR = 5.0;
+      final anchorPaint = Paint()..color = Colors.white;
+      final anchorStroke = Paint()
+        ..color = const Color(0xFFFF9800)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5 / viewScale;
+      final closingHighlight =
+          d.pathClosed && d.points.length >= 3;
+
+      if (d.curveHandles != null) {
+        for (int i = 0;
+            i < d.points.length && i < d.curveHandles!.length;
+            i++) {
+          final h = d.curveHandles![i];
+          if (h == null) continue;
+          canvas.drawLine(
+            d.points[i],
+            h,
+            Paint()
+              ..color = const Color(0xFFFF9800).withValues(alpha: 0.75)
+              ..strokeWidth = 1.0 / viewScale,
+          );
+          canvas.drawCircle(h, anchorR * 0.55, anchorPaint);
+          canvas.drawCircle(h, anchorR * 0.55, anchorStroke);
+        }
+      }
+
+      for (final pt in d.points) {
+        final rect = Rect.fromCircle(center: pt, radius: anchorR);
+        canvas.drawRect(rect, anchorPaint);
+        canvas.drawRect(rect, anchorStroke);
+      }
+      // Closed paths get a highlighted first anchor so the wrap-around
+      // segment is discoverable.
+      if (closingHighlight) {
+        canvas.drawCircle(d.points.first, anchorR * 1.5, anchorStroke);
+      }
+
+      if (pathEditHover != null) {
+        final c = pathEditHover!.$2;
+        final r = anchorR * 1.1;
+        canvas.drawCircle(
+          c,
+          r,
+          Paint()..color = const Color(0xFFFF9800).withValues(alpha: 0.85),
+        );
+        canvas.drawCircle(
+          c,
+          r,
+          Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.2 / viewScale,
+        );
       }
     }
 

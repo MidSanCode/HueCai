@@ -3,8 +3,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'brush.dart';
 import '../services/brush_texture.dart';
+import '../services/path_text.dart';
 
-enum ShapeType { rect, ellipse, polygon, line, curve }
+enum ShapeType { rect, ellipse, polygon, line, curve, path }
 
 class LeafData {
   Offset position;
@@ -84,7 +85,22 @@ class Drawable {
   /// Curve tool: per-anchor bézier out-handles (curveHandles[i] shapes the
   /// segment leaving anchor i). Null entry / null list = corner anchor
   /// (straight segment fallback). Parallel to [points].
+  ///
+  /// Path objects reuse this: one handle per anchor makes that anchor a
+  /// smooth node (the handle acts as the tangent control on both sides),
+  /// while a null entry makes it a corner node.
   List<Offset?>? curveHandles;
+
+  /// Path object: whether the last anchor connects back to the first.
+  bool pathClosed;
+
+  /// Text laid out along this drawable's path ([points] + [curveHandles])
+  /// instead of at a single anchor. [textPathOffset] shifts the first glyph
+  /// along the baseline.
+  bool textOnPath;
+
+  /// Distance along the baseline where the first glyph is placed.
+  double textPathOffset;
 
   /// Text tool: resolved font family (system font name). Null = default.
   String? fontFamily;
@@ -122,6 +138,9 @@ class Drawable {
     this.fontSize = 24.0,
     this.fillSpans,
     this.curveHandles,
+    this.pathClosed = false,
+    this.textOnPath = false,
+    this.textPathOffset = 0.0,
     this.fontFamily,
     this.brushType = BrushType.hardRound,
     this.tipTexture = BrushTexture.none,
@@ -207,6 +226,50 @@ class Drawable {
     return points.first + _rotateVec(Offset(sz.width / 2, sz.height / 2), rotation);
   }
 
+  /// Bézier handle at anchor [i]; null means a corner anchor.
+  Offset? handleAt(int i) =>
+      (curveHandles != null && i >= 0 && i < curveHandles!.length)
+          ? curveHandles![i]
+          : null;
+
+  /// True when this drawable is an editable path object.
+  bool get isPathObject => isShape && shapeType == ShapeType.path;
+
+  /// Geometry for path/curve objects and text-on-path baselines.
+  ///
+  /// Anchors joined without handles get straight segments; an anchor with a
+  /// handle smooths its incoming and outgoing segments (one tangent control
+  /// shared by both sides). Closed paths add the wrap-around segment.
+  ui.Path buildPath() {
+    final path = ui.Path();
+    if (points.isEmpty) return path;
+    path.moveTo(points.first.dx, points.first.dy);
+    if (points.length == 1) return path;
+
+    void segment(int from, int to) {
+      final prev = points[from];
+      final cur = points[to];
+      final hPrev = handleAt(from);
+      final hCur = handleAt(to);
+      if (hPrev == null && hCur == null) {
+        path.lineTo(cur.dx, cur.dy);
+        return;
+      }
+      final c1 = hPrev ?? Offset.lerp(prev, cur, 1.0 / 3.0)!;
+      final c2 = hCur ?? Offset.lerp(prev, cur, 2.0 / 3.0)!;
+      path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, cur.dx, cur.dy);
+    }
+
+    for (var i = 1; i < points.length; i++) {
+      segment(i - 1, i);
+    }
+    if (pathClosed && points.length >= 3) {
+      segment(points.length - 1, 0);
+      path.close();
+    }
+    return path;
+  }
+
   void draw(Canvas canvas, Paint paint) {
     final p = Paint()
       ..strokeWidth = strokeWidth
@@ -246,7 +309,11 @@ class Drawable {
     }
 
     if (textData != null && textData!.trim().isNotEmpty) {
-      _drawText(canvas);
+      if (textOnPath && points.length >= 2) {
+        _drawTextOnPath(canvas);
+      } else {
+        _drawText(canvas);
+      }
       return;
     }
 
@@ -334,34 +401,15 @@ class Drawable {
         }
         break;
       case ShapeType.curve:
-        // Multi-anchor curve: anchors are joined by straight segments; an
-        // anchor with a bézier out-handle turns its outgoing segment into
-        // a cubic (the far end falls back to a proportional in-tangent).
+      case ShapeType.path:
+        // Curve/path objects: anchors joined by straight segments, smoothed
+        // where an anchor carries a bézier handle (see [buildPath]).
         if (points.isNotEmpty) {
           if (points.length == 1) {
             canvas.drawCircle(points.first, max(0.6, strokeWidth / 2), p);
             break;
           }
-          final path = ui.Path()
-            ..moveTo(points.first.dx, points.first.dy);
-          for (int i = 1; i < points.length; i++) {
-            final prev = points[i - 1];
-            final cur = points[i];
-            Offset? hPrev;
-            Offset? hCur;
-            if (curveHandles != null) {
-              if (i - 1 < curveHandles!.length) hPrev = curveHandles![i - 1];
-              if (i < curveHandles!.length) hCur = curveHandles![i];
-            }
-            if (hPrev == null && hCur == null) {
-              path.lineTo(cur.dx, cur.dy);
-            } else {
-              final c1 = hPrev ?? Offset.lerp(prev, cur, 1.0 / 3.0)!;
-              final c2 = hCur ?? Offset.lerp(prev, cur, 2.0 / 3.0)!;
-              path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, cur.dx, cur.dy);
-            }
-          }
-          canvas.drawPath(path, p);
+          canvas.drawPath(buildPath(), p);
         }
         break;
     }
@@ -394,6 +442,9 @@ class Drawable {
     double? fontSize,
     List<int>? fillSpans,
     List<Offset?>? curveHandles,
+    bool? pathClosed,
+    bool? textOnPath,
+    double? textPathOffset,
     String? fontFamily,
     BrushTexture? tipTexture,
     List<int>? colorValues,
@@ -422,6 +473,9 @@ class Drawable {
         fontSize: fontSize ?? this.fontSize,
         fillSpans: fillSpans ?? (this.fillSpans != null ? List.from(this.fillSpans!) : null),
         curveHandles: curveHandles ?? (this.curveHandles != null ? List<Offset?>.from(this.curveHandles!) : null),
+        pathClosed: pathClosed ?? this.pathClosed,
+        textOnPath: textOnPath ?? this.textOnPath,
+        textPathOffset: textPathOffset ?? this.textPathOffset,
         fontFamily: fontFamily ?? this.fontFamily,
         tipTexture: tipTexture ?? this.tipTexture,
         colorValues: colorValues ??
@@ -457,6 +511,9 @@ class Drawable {
                   ? null
                   : {'x': h.dx, 'y': h.dy})
               .toList(),
+        if (pathClosed) 'pathClosed': pathClosed,
+        if (textOnPath) 'textOnPath': textOnPath,
+        if (textOnPath) 'textPathOffset': textPathOffset,
       };
 
   factory Drawable.fromJson(Map<String, dynamic> json) => Drawable(
@@ -516,7 +573,53 @@ class Drawable {
                       ))
                 .toList()
             : null,
+        pathClosed: json['pathClosed'] as bool? ?? false,
+        textOnPath: json['textOnPath'] as bool? ?? false,
+        textPathOffset: (json['textPathOffset'] as num?)?.toDouble() ?? 0.0,
       );
+
+  /// Text laid out along this drawable's path instead of at one anchor.
+  ///
+  /// Each glyph is placed on the baseline (rotated to the local tangent) by
+  /// [PathTextLayout]; the whole strip is translated so `points.first` keeps
+  /// acting as the drawable's anchor for moving/scaling.
+  void _drawTextOnPath(Canvas canvas) {
+    final path = buildPath();
+    final style = TextStyle(
+      color: color.withValues(alpha: opacity),
+      fontSize: fontSize,
+      height: 1.2,
+      fontFamily: fontFamily,
+    );
+    final glyphs = PathTextLayout.layout(
+      path: path,
+      text: textData!,
+      measure: (ch) => PathTextLayout.measure(ch, style),
+      height: (ch) => fontSize * 1.2,
+      offset: textPathOffset,
+    );
+    if (glyphs.isEmpty) return;
+    // Keep the anchor semantics: shift the baseline so its start coincides
+    // with points.first for pure-translation (unrotated) drawables.
+    final metrics = path.computeMetrics().toList();
+    final origin = metrics.isEmpty
+        ? Offset.zero
+        : metrics.first.getTangentForOffset(0)?.position ?? Offset.zero;
+    canvas.save();
+    canvas.translate(points.first.dx - origin.dx, points.first.dy - origin.dy);
+    for (final glyph in glyphs) {
+      final tp = TextPainter(
+        text: TextSpan(text: glyph.char, style: style),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      canvas.save();
+      canvas.translate(glyph.position.dx, glyph.position.dy);
+      canvas.rotate(glyph.angle);
+      tp.paint(canvas, Offset(-glyph.width / 2, -glyph.height / 2));
+      canvas.restore();
+    }
+    canvas.restore();
+  }
 
   void _drawText(Canvas canvas) {
     final tp = TextPainter(

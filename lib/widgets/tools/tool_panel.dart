@@ -7,6 +7,7 @@ import '../../providers/app_settings.dart';
 import '../../models/drawable.dart';
 import '../../models/brush.dart';
 import '../panels/color_panel.dart';
+import '../dialogs/text_input_dialog.dart';
 
 class ToolPanel extends StatefulWidget {
   final ToolProvider toolProvider;
@@ -39,6 +40,7 @@ class _ToolPanelState extends State<ToolPanel> {
     ToolType.liquify: Icons.waves,
     ToolType.perspectiveGuide: Icons.grid_on,
     ToolType.symmetry: Icons.flip,
+    ToolType.pathEdit: Icons.polyline,
   };
 
   static const Map<ToolType, String> _toolLabels = {
@@ -57,6 +59,7 @@ class _ToolPanelState extends State<ToolPanel> {
     ToolType.liquify: 'tool.liquify',
     ToolType.perspectiveGuide: 'tool.perspective_guide',
     ToolType.symmetry: 'tool.symmetry',
+    ToolType.pathEdit: 'tool.path_edit',
   };
 
   @override
@@ -86,6 +89,16 @@ class _ToolPanelState extends State<ToolPanel> {
           if (tp.currentTool == ToolType.gradient) ...[
             const SizedBox(height: 4),
             _gradientControls(context),
+            const SizedBox(height: 4),
+          ],
+          if (tp.currentTool == ToolType.pathEdit) ...[
+            const SizedBox(height: 4),
+            _pathEditControls(context, tp),
+            const SizedBox(height: 4),
+          ],
+          if (tp.currentTool == ToolType.text) ...[
+            const SizedBox(height: 4),
+            _textOnPathControls(context, tp),
             const SizedBox(height: 4),
           ],
           if (widget.portrait) ...[
@@ -260,6 +273,176 @@ class _ToolPanelState extends State<ToolPanel> {
     );
   }
 
+  /// Compact icon action used by the path editor / text-on-path controls.
+  Widget _panelButton(
+    BuildContext context,
+    IconData icon,
+    String tooltip, {
+    bool selected = false,
+    VoidCallback? onTap,
+  }) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: selected ? theme.colorScheme.primaryContainer : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: SizedBox(
+              width: 40,
+              height: 32,
+              child: Icon(
+                icon,
+                size: 20,
+                color: onTap == null ? theme.disabledColor : null,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The path under edit, or null when the selection is not a path.
+  Drawable? _selectedPath(ProjectProvider pp) {
+    final selected = pp.selectedDrawable;
+    if (selected == null) return null;
+    final isPath = selected.shapeType == ShapeType.path || selected.textOnPath;
+    return isPath ? selected : null;
+  }
+
+  Widget _pathEditControls(BuildContext context, ToolProvider tp) {
+    final pp = context.watch<ProjectProvider>();
+    final path = _selectedPath(pp);
+
+    void replace(Drawable updated) {
+      pp.saveSnapshot();
+      updated.contentVersion = (path?.contentVersion ?? 0) + 1;
+      pp.updateDrawable(updated.id, updated);
+      pp.selectDrawable(updated);
+      pp.refresh();
+    }
+
+    return Column(
+      children: [
+        _panelButton(
+          context,
+          Icons.change_history,
+          'path.toggle_closed'.tr(),
+          selected: path?.pathClosed ?? false,
+          onTap: path == null
+              ? null
+              : () => replace(path.copyWith(pathClosed: !path.pathClosed)),
+        ),
+        _panelButton(
+          context,
+          Icons.format_color_fill,
+          'path.toggle_fill'.tr(),
+          selected: path?.isFilled ?? false,
+          onTap: path == null
+              ? null
+              : () => replace(path.copyWith(isFilled: !path.isFilled)),
+        ),
+        _panelButton(
+          context,
+          Icons.remove_circle_outline,
+          'path.delete_node'.tr(),
+          onTap: path == null
+              ? null
+              : () {
+                  if (path.points.length <= 2) return;
+                  final handles = path.curveHandles == null
+                      ? null
+                      : List<Offset?>.from(path.curveHandles!);
+                  final points = List<Offset>.from(path.points);
+                  points.removeLast();
+                  if (handles != null && handles.isNotEmpty) {
+                    while (handles.length > points.length) {
+                      handles.removeLast();
+                    }
+                  }
+                  replace(path.copyWith(
+                    points: points,
+                    curveHandles: handles ?? const <Offset?>[],
+                  ));
+                },
+        ),
+        _panelButton(
+          context,
+          Icons.text_fields,
+          'path.attach_text'.tr(),
+          selected: path?.textOnPath ?? false,
+          onTap: path == null
+              ? null
+              : () => _attachTextToPath(context, pp, tp, path),
+        ),
+      ],
+    );
+  }
+
+  /// Lays text along an existing path: the path keeps its geometry and gains
+  /// a text payload rendered glyph-by-glyph along it.
+  Future<void> _attachTextToPath(
+    BuildContext context,
+    ProjectProvider pp,
+    ToolProvider tp,
+    Drawable path,
+  ) async {
+    final result = await showTextInputDialog(
+      context,
+      initialFontFamily: tp.textFontFamily,
+    );
+    if (result == null || result.text.trim().isEmpty) return;
+    if (!context.mounted) return;
+    tp.setTextFontFamily(result.fontFamily);
+    pp.saveSnapshot();
+    final updated = path.copyWith(
+      isShape: true,
+      shapeType: ShapeType.path,
+      textData: result.text,
+      textOnPath: true,
+      textPathOffset: tp.textPathOffset,
+      fontSize: result.fontSize,
+      fontFamily: result.fontFamily,
+    );
+    updated.contentVersion = path.contentVersion + 1;
+    pp.updateDrawable(path.id, updated);
+    pp.selectDrawable(updated);
+    pp.refresh();
+  }
+
+  Widget _textOnPathControls(BuildContext context, ToolProvider tp) {
+    return Column(
+      children: [
+        _panelButton(
+          context,
+          Icons.timeline,
+          'text.on_path'.tr(),
+          selected: tp.textOnPath,
+          onTap: () {
+            tp.toggleTextOnPath();
+            setState(() {});
+          },
+        ),
+        if (tp.textOnPath)
+          _brushSlider(
+            icon: Icons.start,
+            value: tp.textPathOffset,
+            min: 0,
+            max: 300,
+            label: 'text.path_offset'.tr(namedArgs: {
+              'n': tp.textPathOffset.round().toString(),
+            }),
+            onChange: (v) => tp.setTextPathOffset(v),
+          ),
+      ],
+    );
+  }
+
   Widget _brushControls(BuildContext context) {
     final tp = widget.toolProvider;
     return Column(
@@ -367,6 +550,7 @@ class _ToolPanelState extends State<ToolPanel> {
       case ShapeType.polygon: return 'shape.polygon';
       case ShapeType.line: return 'shape.line';
       case ShapeType.curve: return 'shape.curve';
+      case ShapeType.path: return 'tool.path_edit';
     }
   }
 
@@ -442,6 +626,7 @@ class _ToolPanelState extends State<ToolPanel> {
       case ShapeType.polygon: return Icons.change_history;
       case ShapeType.line: return Icons.horizontal_rule;
       case ShapeType.curve: return Icons.timeline;
+      case ShapeType.path: return Icons.polyline;
     }
   }
 }

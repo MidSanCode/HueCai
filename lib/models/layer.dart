@@ -242,6 +242,12 @@ class Layer {
   /// below it in the stack. Adjustment layers render no content of their own.
   AdjustmentSpec? adjustment;
 
+  /// Vector layer: intended for resolution-independent content (paths, text,
+  /// shapes) rather than painted pixels. The flag is a semantic marker —
+  /// everything here already renders from vector drawables — and it tells
+  /// destructive raster operations to ask before flattening the layer.
+  bool isVector;
+
   /// Bumped whenever the image transform (offset/rotation/scale/flip)
   /// changes, so the painter's raster cache knows to re-render this layer.
   int imageVersion = 0;
@@ -266,6 +272,7 @@ class Layer {
     this.maskEnabled = true,
     this.cloneOfId,
     this.adjustment,
+    this.isVector = false,
     List<Drawable>? drawables,
   }) : drawables = drawables ?? [];
 
@@ -289,6 +296,7 @@ class Layer {
     bool? maskEnabled,
     String? cloneOfId,
     AdjustmentSpec? adjustment,
+    bool? isVector,
     List<Drawable>? drawables,
   }) =>
       Layer(
@@ -311,6 +319,7 @@ class Layer {
         maskEnabled: maskEnabled ?? this.maskEnabled,
         cloneOfId: cloneOfId ?? this.cloneOfId,
         adjustment: adjustment ?? this.adjustment,
+        isVector: isVector ?? this.isVector,
         drawables: drawables ?? this.drawables,
       );
 
@@ -333,6 +342,7 @@ class Layer {
         'maskStrokes': maskStrokes?.map((s) => s.toJson()).toList(),
         if (cloneOfId != null) 'cloneOfId': cloneOfId,
         if (adjustment != null) 'adjustment': adjustment!.toJson(),
+        if (isVector) 'isVector': isVector,
         'drawables': drawables.map((d) => d.toJson()).toList(),
       };
 
@@ -365,6 +375,7 @@ class Layer {
             ? AdjustmentSpec.fromJson(
                 (json['adjustment'] as Map).cast<String, dynamic>())
             : null,
+        isVector: json['isVector'] as bool? ?? false,
         drawables: (json['drawables'] as List?)
                 ?.map(
                     (d) => Drawable.fromJson(d as Map<String, dynamic>))

@@ -459,5 +459,18 @@
   "animation.export_done_gif": "已导出 {name}（{size}）",
   "animation.export_done_sequence": "已导出 {count} 帧到 {dir}",
   "animation.export_failed": "导出失败：{error}",
-  "animation.no_frames": "还没有帧"
+  "animation.no_frames": "还没有帧",
+  "tool.path_edit": "路径编辑",
+  "path.toggle_closed": "闭合/断开路径",
+  "path.toggle_fill": "填充/描边",
+  "path.delete_node": "删除末节点",
+  "path.attach_text": "沿此路径排布文本",
+  "text.on_path": "沿路径文本",
+  "text.path_offset": "起始偏移：{n}",
+  "layer.new_vector": "新建矢量图层",
+  "layer.vector_default_name": "矢量图层 {n}",
+  "layer.convert_vector": "转换为矢量图层",
+  "layer.rasterize_vector": "栅格化矢量图层",
+  "layer.vector_warning_title": "栅格化矢量图层",
+  "layer.vector_warning_body": "该操作会把矢量图层压平为像素，之后无法再按路径/文本编辑。是否继续？"
 }

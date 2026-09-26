@@ -240,6 +240,7 @@ class LgdfCodec {
         'mask_strokes': layer.maskStrokes?.map((s) => s.toJson()).toList(),
         'clone_of_id': layer.cloneOfId,
         'adjustment': layer.adjustment?.toJson(),
+        'is_vector': layer.isVector,
         'image_path': layer.imagePath,
         'image_offset': {'x': layer.imageOffset.dx, 'y': layer.imageOffset.dy},
         'image_rotation': layer.imageRotation,
@@ -269,6 +270,7 @@ class LgdfCodec {
           ? AdjustmentSpec.fromJson(
               (json['adjustment'] as Map).cast<String, dynamic>())
           : null,
+      isVector: json['is_vector'] as bool? ?? false,
       imagePath: json['image_path'] as String?,
       imageOffset: offset == null
           ? Offset.zero

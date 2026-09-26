@@ -97,6 +97,12 @@ class LayerPanel extends StatelessWidget {
                       visualDensity: VisualDensity.compact,
                     ),
                     IconButton(
+                      icon: const Icon(Icons.polyline, size: 18),
+                      onPressed: () => provider.addVectorLayer(),
+                      tooltip: 'layer.new_vector'.tr(),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
                       icon: const Icon(Icons.create_new_folder_outlined, size: 18),
                       onPressed: project.layers.isEmpty
                           ? null
@@ -258,6 +264,8 @@ class _LayerItemState extends State<_LayerItem> {
                       Icon(Icons.content_copy, size: 12, color: theme.colorScheme.onSurfaceVariant),
                     if (widget.layer.adjustment != null)
                       Icon(Icons.auto_fix_high, size: 12, color: theme.colorScheme.onSurfaceVariant),
+                    if (widget.layer.isVector)
+                      Icon(Icons.polyline, size: 12, color: theme.colorScheme.primary),
                   ],
                 ),
                 // Quick actions for the current non-background layer:
@@ -461,6 +469,16 @@ class _LayerItemState extends State<_LayerItem> {
             title: Text('layer.edit_adjustment'.tr()),
             dense: true,
           )),
+        PopupMenuItem(value: 'vector', child: ListTile(
+          leading: Icon(
+            widget.layer.isVector ? Icons.grid_on : Icons.polyline,
+            size: 18,
+          ),
+          title: Text(widget.layer.isVector
+              ? 'layer.rasterize_vector'.tr()
+              : 'layer.convert_vector'.tr()),
+          dense: true,
+        )),
         PopupMenuItem(value: 'blend', child: StatefulBuilder(
           builder: (ctx, setState) => Column(
             mainAxisSize: MainAxisSize.min,
@@ -512,6 +530,10 @@ class _LayerItemState extends State<_LayerItem> {
               .moveLayerToGroup(widget.index, null);
         case 'clone':
           context.read<ProjectProvider>().addCloneLayer(widget.index);
+        case 'vector':
+          final pp = context.read<ProjectProvider>();
+          pp.saveSnapshot();
+          pp.setLayerVector(widget.index, !widget.layer.isVector);
         case 'add_adjustment':
           _addAdjustmentLayer(context);
         case 'edit_adjustment':

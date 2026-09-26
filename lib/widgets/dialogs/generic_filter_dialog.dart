@@ -6,6 +6,7 @@ import '../../providers/project_provider.dart';
 import '../../services/filter_registry.dart';
 import '../../services/image_filters.dart';
 import 'filter_dialog.dart';
+import 'vector_warning.dart';
 
 /// Generic, registry-driven filter dialog: renders one slider per declared
 /// parameter, so every registered filter gets a UI for free.
@@ -102,6 +103,9 @@ class _GenericFilterDialogState extends State<GenericFilterDialog> {
             final values = Map<String, dynamic>.from(_values);
             final navigator = Navigator.of(context);
             if (index != null) {
+              if (!await confirmVectorRasterize(context, pp, index)) {
+                return;
+              }
               await pp.applyFilterToLayer(
                 index,
                 (img) => FilterRegistry.apply(widget.def.kind, img, values),

@@ -459,5 +459,18 @@
   "animation.export_done_gif": "Exported {name} ({size})",
   "animation.export_done_sequence": "Exported {count} frames to {dir}",
   "animation.export_failed": "Export failed: {error}",
-  "animation.no_frames": "No frames yet"
+  "animation.no_frames": "No frames yet",
+  "tool.path_edit": "Path editor",
+  "path.toggle_closed": "Close / open path",
+  "path.toggle_fill": "Fill / stroke",
+  "path.delete_node": "Delete last node",
+  "path.attach_text": "Place text along this path",
+  "text.on_path": "Text on path",
+  "text.path_offset": "Start offset: {n}",
+  "layer.new_vector": "New vector layer",
+  "layer.vector_default_name": "Vector layer {n}",
+  "layer.convert_vector": "Convert to vector layer",
+  "layer.rasterize_vector": "Rasterize vector layer",
+  "layer.vector_warning_title": "Rasterize vector layer",
+  "layer.vector_warning_body": "This flattens the vector layer to pixels; its paths and text can no longer be edited. Continue?"
 }

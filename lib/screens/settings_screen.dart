@@ -404,6 +404,7 @@ class _DrawingContentState extends State<_DrawingContent> {
       case ToolType.liquify: return 'Liquify';
       case ToolType.perspectiveGuide: return 'Perspective Guide';
       case ToolType.symmetry: return 'Symmetry';
+      case ToolType.pathEdit: return 'Path Editor';
     }
   }
 }

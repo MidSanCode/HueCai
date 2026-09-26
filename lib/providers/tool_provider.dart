@@ -22,6 +22,7 @@ enum ToolType {
   liquify,
   perspectiveGuide,
   symmetry,
+  pathEdit,
 }
 
 class ToolProvider extends ChangeNotifier {
@@ -187,6 +188,25 @@ class ToolProvider extends ChangeNotifier {
   }
   String get textFontFamily => _textFontFamily;
   List<Color> get memoryColors => _memoryColors;
+
+  bool _textOnPath = false;
+  double _textPathOffset = 0;
+
+  /// Text tool: lay the next text out along a path instead of at one anchor.
+  bool get textOnPath => _textOnPath;
+
+  /// Distance along the baseline where text-on-path starts.
+  double get textPathOffset => _textPathOffset;
+
+  void toggleTextOnPath() {
+    _textOnPath = !_textOnPath;
+    notifyListeners();
+  }
+
+  void setTextPathOffset(double value) {
+    _textPathOffset = value;
+    notifyListeners();
+  }
 
   void setTextFontFamily(String family) {
     _textFontFamily = family;

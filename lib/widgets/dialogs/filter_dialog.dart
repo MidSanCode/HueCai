@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../providers/project_provider.dart';
 import '../../services/image_filters.dart';
 import '../common/curve_editor.dart';
+import 'vector_warning.dart';
 
 /// The five built-in filters.
 enum FilterKind { gaussianBlur, unsharpMask, levels, curves, hueSaturation }
@@ -35,6 +36,8 @@ Future<void> showFilterDialog(BuildContext context, FilterKind kind) async {
   if (index == null) return;
   final spec = await pickFilterSpec(context, kind);
   if (spec == null) return;
+  if (!context.mounted) return;
+  if (!await confirmVectorRasterize(context, pp, index)) return;
   await pp.applyFilterToLayer(index, (img) => spec.apply(img));
 }
 
