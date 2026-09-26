@@ -6,7 +6,6 @@ import '../../models/layer.dart';
 import '../../models/project.dart';
 import '../../services/filter_registry.dart';
 import '../../services/image_filters.dart';
-import '../dialogs/filter_dialog.dart';
 import '../dialogs/generic_filter_dialog.dart';
 
 Widget _buildLayerItem(

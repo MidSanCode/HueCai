@@ -9,8 +9,8 @@ import '../providers/app_settings.dart';
 import '../services/project_service.dart';
 import '../services/stroke_stabilizer.dart';
 import '../services/assist_ruler.dart';
-import '../services/filter_registry.dart';
 import '../widgets/dialogs/generic_filter_dialog.dart';
+import '../widgets/dialogs/animation_export_dialog.dart';
 import '../models/drawable.dart';
 import '../screens/settings_screen.dart';
 import '../screens/editor_screen.dart';
@@ -664,6 +664,16 @@ void _showExportDialog(BuildContext context) {
             onTap: () {
               Navigator.of(ctx).pop();
               context.read<ProjectProvider>().exportImage('jpg');
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.movie_creation_outlined,
+                color: theme.colorScheme.primary),
+            title: Text('animation.export_action'.tr()),
+            subtitle: Text('animation.export_hint'.tr()),
+            onTap: () {
+              Navigator.of(ctx).pop();
+              showAnimationExportDialog(context);
             },
           ),
         ],

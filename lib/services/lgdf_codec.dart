@@ -14,6 +14,7 @@ import '../models/mask_stroke.dart';
 import '../models/project.dart';
 import 'history_service.dart';
 import 'image_filters.dart';
+import '../models/animation.dart';
 
 /// Reader/writer for the **LGDF** (Layered Generic Data Format) container,
 /// following `temp/example/lgdf-standard.md` v2.0.
@@ -183,6 +184,11 @@ class LgdfCodec {
       'canvas': project.settings.toJson(),
       'layers': project.layers.map(_layerDescriptor).toList(),
       'groups': project.groups.map((g) => g.toJson()).toList(),
+      'animation': {
+        'settings': project.animation.toJson(),
+        'current_frame': project.currentFrame,
+        'frames': project.frames.map((f) => f.toJson()).toList(),
+      },
       'history': jsonDecode(jsonEncode(history.toJson())),
     });
 
@@ -199,8 +205,27 @@ class LgdfCodec {
     return entries;
   }
 
+  /// Rebuilds animation frames from the `animation` block of config.json.
+  static List<AnimationFrame> _animationFrames(dynamic animation) {
+    final list = (animation as Map<String, dynamic>?)?['frames'] as List?;
+    if (list == null) return [];
+    return list
+        .map((f) => AnimationFrame.fromJson((f as Map).cast<String, dynamic>()))
+        .toList();
+  }
+
+  static int _animationCurrentFrame(dynamic animation) =>
+      ((animation as Map<String, dynamic>?)?['current_frame'] as num?)?.toInt() ??
+      0;
+
+  static AnimationSettings _animationSettings(dynamic animation) {
+    final raw = (animation as Map<String, dynamic>?)?['settings'];
+    return raw is Map
+        ? AnimationSettings.fromJson(raw.cast<String, dynamic>())
+        : AnimationSettings();
+  }
+
   /// Serializes a layer into the `spec/config.json` layer descriptor.
-  ///
   /// Pixel content lives in the assets layer; this holds everything needed to
   /// rebuild the `Layer` object (and the vector drawables).
   static Map<String, dynamic> _layerDescriptor(Layer layer) => {
@@ -318,9 +343,7 @@ class LgdfCodec {
         if (name.startsWith('/') || name.split('/').contains('..')) continue;
         if (!file.isFile) continue;
         final content = file.content;
-        entries[name] = content is Uint8List
-            ? content
-            : Uint8List.fromList(content);
+        entries[name] = content;
       }
       return await _projectFromEntries(entries, sourcePath: path);
     } catch (_) {
@@ -411,6 +434,9 @@ class LgdfCodec {
       filePath: sourcePath,
       currentLayerIndex:
           (projectMeta['current_layer_index'] as num?)?.toInt() ?? 0,
+      frames: _animationFrames(config['animation']),
+      currentFrame: _animationCurrentFrame(config['animation']),
+      animation: _animationSettings(config['animation']),
     );
 
     // Re-attach each layer's rasterized pixels from assets/layers/.

@@ -1,3 +1,4 @@
+import 'animation.dart';
 import 'canvas_settings.dart';
 import 'layer.dart';
 
@@ -16,6 +17,14 @@ class Project {
   String? filePath;
   int currentLayerIndex;
 
+  /// Animation timeline. Empty means the project is a still image.
+  List<AnimationFrame> frames;
+
+  /// Index into [frames] currently being edited.
+  int currentFrame;
+
+  AnimationSettings animation;
+
   Project({
     required this.id,
     required this.name,
@@ -26,7 +35,19 @@ class Project {
     required this.modifiedAt,
     this.filePath,
     this.currentLayerIndex = 0,
-  }) : groups = groups ?? [];
+    List<AnimationFrame>? frames,
+    this.currentFrame = 0,
+    AnimationSettings? animation,
+  })  : groups = groups ?? [],
+        frames = frames ?? [],
+        animation = animation ?? AnimationSettings();
+
+  /// True when this project has an animation timeline.
+  bool get isAnimated => frames.length > 1;
+
+  /// The frame currently being edited, or null for a still project.
+  AnimationFrame? get activeFrame =>
+      frames.isEmpty ? null : frames[currentFrame.clamp(0, frames.length - 1)];
 
   Layer? get currentLayer =>
       layers.isNotEmpty && currentLayerIndex < layers.length
@@ -79,6 +100,9 @@ class Project {
         'modifiedAt': modifiedAt.toIso8601String(),
         'filePath': filePath,
         'currentLayerIndex': currentLayerIndex,
+        'frames': frames.map((f) => f.toJson()).toList(),
+        'currentFrame': currentFrame,
+        'animation': animation.toJson(),
       };
 
   factory Project.fromJson(Map<String, dynamic> json) => Project(
@@ -95,6 +119,14 @@ class Project {
         modifiedAt: DateTime.parse(json['modifiedAt'] as String),
         filePath: json['filePath'] as String?,
         currentLayerIndex: json['currentLayerIndex'] as int? ?? 0,
+        frames: (json['frames'] as List?)
+            ?.map((f) => AnimationFrame.fromJson((f as Map).cast<String, dynamic>()))
+            .toList(),
+        currentFrame: json['currentFrame'] as int? ?? 0,
+        animation: json['animation'] != null
+            ? AnimationSettings.fromJson(
+                (json['animation'] as Map).cast<String, dynamic>())
+            : null,
       );
 }
 

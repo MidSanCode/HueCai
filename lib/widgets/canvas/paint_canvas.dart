@@ -10,6 +10,7 @@ import '../../models/project.dart';
 import '../../models/layer.dart';
 import '../../models/drawable.dart';
 import '../../models/selection_data.dart';
+import '../../models/animation.dart';
 import '../../providers/tool_provider.dart';
 import '../../providers/canvas_provider.dart';
 import '../../providers/project_provider.dart';
@@ -2520,6 +2521,16 @@ class _PaintCanvasState extends State<PaintCanvas> {
                               ? _perspectiveViewPoints()
                               : const [],
                           rulers: tp.rulers,
+                          onionSkin: [
+                            for (final ghost in pp.onionFrames())
+                              (
+                                frame: ghost.frame,
+                                before: ghost.before,
+                                opacity: (0.34 / ghost.distance)
+                                    .clamp(0.08, 0.34)
+                                    .toDouble(),
+                              ),
+                          ],
                           adjustmentImages: _adjustmentImages,
                           curveHoverInsert: _curveHoverInsert,
                           curvePlacing: _isPlacingShapePoints,
@@ -2652,6 +2663,10 @@ class _CanvasPainter extends CustomPainter {
   final bool perspectiveEnabled;
   final List<Offset> perspectivePoints;
   final List<AssistRuler> rulers;
+
+  /// Ghosted neighbouring animation frames (onion skin), drawn behind the
+  /// current frame's content.
+  final List<({AnimationFrame frame, bool before, double opacity})> onionSkin;
   final Map<String, ui.Image> adjustmentImages;
   final bool curvePlacing;
   final Offset? curveHoverInsert;
@@ -2678,6 +2693,7 @@ class _CanvasPainter extends CustomPainter {
     this.perspectiveEnabled = false,
     this.perspectivePoints = const [],
     this.rulers = const [],
+    this.onionSkin = const [],
     this.adjustmentImages = const {},
     this.curvePlacing = false,
     this.curveHoverInsert,
@@ -2713,6 +2729,26 @@ class _CanvasPainter extends CustomPainter {
     final bgColor = Color(project.settings.backgroundColor);
     if (bgColor.a > 0) {
       canvas.drawRect(docRect, Paint()..color = bgColor);
+    }
+
+    // Onion skin: neighbouring frames as flat, tinted ghosts (previous frames
+    // warm, following frames cool) so motion direction stays readable.
+    if (onionSkin.isNotEmpty) {
+      final order = project.layers.map((l) => l.id).toList();
+      for (final ghost in onionSkin) {
+        final tint = ghost.before
+            ? const Color(0xFFFF5252)
+            : const Color(0xFF448AFF);
+        canvas.saveLayer(
+          docRect,
+          Paint()
+            ..color = Colors.white.withValues(alpha: ghost.opacity)
+            ..colorFilter =
+                ColorFilter.mode(tint, BlendMode.srcATop),
+        );
+        ghost.frame.paint(canvas, Paint(), layerOrder: order);
+        canvas.restore();
+      }
     }
 
     void renderLayer(Layer layer) {

@@ -15,6 +15,7 @@ import '../services/lgdf_codec.dart';
 import '../services/ora_codec.dart';
 import '../services/image_filters.dart';
 import '../services/filter_registry.dart';
+import '../models/animation.dart';
 import '../models/mask_stroke.dart';
 import '../services/history_service.dart';
 import 'package:path_provider/path_provider.dart';
@@ -218,6 +219,221 @@ class ProjectProvider extends ChangeNotifier {
 
   void refresh() {
     notifyListeners();
+  }
+
+  // ------------------------------------------------------------ animation
+
+  /// Starts a timeline if the project has none: the current drawing becomes
+  /// frame 0. Returns true when a timeline is available afterwards.
+  bool ensureTimeline() {
+    final project = _currentProject;
+    if (project == null) return false;
+    if (project.frames.isNotEmpty) return true;
+    project.frames.add(_captureFrame(project));
+    project.currentFrame = 0;
+    _markChanged();
+    return true;
+  }
+
+  /// Snapshots the live layer content into a new [AnimationFrame].
+  AnimationFrame _captureFrame(Project project, {String? id}) => AnimationFrame(
+        id: id ?? _uuid.v4(),
+        layers: AnimationFrame.snapshot([
+          for (final layer in project.layers)
+            (id: layer.id, drawables: layer.drawables),
+        ]),
+      );
+
+  /// Writes the live layer content back into the frame being edited, so
+  /// edits are not lost when navigating away.
+  void commitCurrentFrame() {
+    final project = _currentProject;
+    if (project == null || project.frames.isEmpty) return;
+    final index = project.currentFrame.clamp(0, project.frames.length - 1);
+    project.frames[index] = AnimationFrame(
+      id: project.frames[index].id,
+      layers: AnimationFrame.snapshot([
+        for (final layer in project.layers)
+          (id: layer.id, drawables: layer.drawables),
+      ]),
+    );
+  }
+
+  /// Loads frame [index] into the live layers, committing the current frame
+  /// first. Returns false when the index is out of range.
+  bool goToFrame(int index, {bool commit = true}) {
+    final project = _currentProject;
+    if (project == null || project.frames.isEmpty) return false;
+    if (index < 0 || index >= project.frames.length) return false;
+    if (commit) commitCurrentFrame();
+    final frame = project.frames[index];
+    for (final layer in project.layers) {
+      layer.drawables = AnimationFrame.copyDrawables(
+        frame.layers[layer.id] ?? const [],
+      );
+      // Bust the per-layer raster cache: the content hash covers the
+      // drawable list, but the version bump makes the change unambiguous.
+      layer.imageVersion++;
+    }
+    project.currentFrame = index;
+    _markChanged();
+    return true;
+  }
+
+  /// Advances to the next frame, wrapping when [animation.loop] is set.
+  void nextFrame() {
+    final project = _currentProject;
+    if (project == null || project.frames.length < 2) return;
+    final next = project.currentFrame + 1;
+    if (next >= project.frames.length && !project.animation.loop) return;
+    goToFrame(next % project.frames.length, commit: false);
+  }
+
+  void previousFrame() {
+    final project = _currentProject;
+    if (project == null || project.frames.length < 2) return;
+    final prev = project.currentFrame - 1;
+    goToFrame((prev + project.frames.length) % project.frames.length,
+        commit: false);
+  }
+
+  /// Adds an empty frame after the current one and selects it.
+  void addFrame() {
+    final project = _currentProject;
+    if (project == null) return;
+    if (!ensureTimeline()) return;
+    commitCurrentFrame();
+    final at = project.currentFrame + 1;
+    project.frames.insert(at, AnimationFrame(id: _uuid.v4()));
+    goToFrame(at, commit: false);
+  }
+
+  /// Duplicates the current frame (content included) right after it.
+  void duplicateFrame() {
+    final project = _currentProject;
+    if (project == null) return;
+    if (!ensureTimeline()) return;
+    commitCurrentFrame();
+    final at = project.currentFrame + 1;
+    project.frames.insert(
+      at,
+      project.frames[project.currentFrame].copyWith(id: _uuid.v4()),
+    );
+    goToFrame(at, commit: false);
+  }
+
+  /// Deletes frame [index]. The last remaining frame cannot be deleted.
+  void deleteFrame(int index) {
+    final project = _currentProject;
+    if (project == null || project.frames.isEmpty) return;
+    if (project.frames.length <= 1) return;
+    if (index < 0 || index >= project.frames.length) return;
+    project.frames.removeAt(index);
+    final target = index >= project.frames.length
+        ? project.frames.length - 1
+        : index;
+    project.currentFrame = target;
+    goToFrame(target, commit: false);
+  }
+
+  /// Moves a frame within the timeline (drag reorder).
+  void moveFrame(int from, int to) {
+    final project = _currentProject;
+    if (project == null) return;
+    if (from < 0 || from >= project.frames.length) return;
+    if (to < 0 || to >= project.frames.length) return;
+    if (from == to) return;
+    commitCurrentFrame();
+    final frame = project.frames.removeAt(from);
+    project.frames.insert(to, frame);
+    project.currentFrame = to;
+    _markChanged();
+  }
+
+  void setAnimationFps(int fps) {
+    final project = _currentProject;
+    if (project == null) return;
+    project.animation.fps = fps.clamp(1, 60);
+    _markChanged();
+  }
+
+  void toggleOnionSkin() {
+    final project = _currentProject;
+    if (project == null) return;
+    project.animation.onionSkin = !project.animation.onionSkin;
+    _markChanged();
+  }
+
+  void setOnionRange(int range) {
+    final project = _currentProject;
+    if (project == null) return;
+    project.animation.onionRange = range.clamp(1, 5);
+    _markChanged();
+  }
+
+  /// Drawables of up to [count] neighbouring frames for the onion-skin
+  /// overlay. Returns an empty list when the overlay is off or there are no
+  /// neighbours.
+  List<({AnimationFrame frame, int distance, bool before})> onionFrames() {
+    final project = _currentProject;
+    if (project == null || !project.animation.onionSkin) return const [];
+    if (project.frames.length < 2) return const [];
+    final out = <({AnimationFrame frame, int distance, bool before})>[];
+    final range = project.animation.onionRange;
+    for (var d = 1; d <= range; d++) {
+      final before = project.currentFrame - d;
+      if (before >= 0) {
+        out.add((frame: project.frames[before], distance: d, before: true));
+      }
+      final after = project.currentFrame + d;
+      if (after < project.frames.length) {
+        out.add((frame: project.frames[after], distance: d, before: false));
+      }
+    }
+    return out;
+  }
+
+  /// Renders an arbitrary frame to a full-canvas raster without disturbing
+  /// the editing state (used by the export pipeline).
+  Future<ui.Image> rasterizeFrame(AnimationFrame frame) async {
+    final project = _currentProject;
+    if (project == null) return _createTransparentImage(1, 1);
+    final w = project.settings.width.toInt();
+    final h = project.settings.height.toInt();
+    final recorder = ui.PictureRecorder();
+    final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+    final bg = Color(project.settings.backgroundColor);
+    if (bg.a > 0) {
+      c.drawRect(Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+          Paint()..color = bg);
+    }
+    // Baked layer rasters are frame-independent, so they are drawn as-is.
+    for (final layer in project.layers) {
+      if (!layer.visible) continue;
+      if (layer.image != null) {
+        final img = layer.image!;
+        c.save();
+        c.translate(layer.imageOffset.dx + img.width / 2,
+            layer.imageOffset.dy + img.height / 2);
+        c.rotate(layer.imageRotation);
+        c.scale(layer.imageScale * (layer.imageFlipH ? -1.0 : 1.0),
+            layer.imageScale * (layer.imageFlipV ? -1.0 : 1.0));
+        c.drawImageRect(
+          img,
+          Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+          Rect.fromLTWH(-img.width / 2, -img.height / 2, img.width.toDouble(),
+              img.height.toDouble()),
+          Paint()..color = Colors.white.withValues(alpha: layer.opacity),
+        );
+        c.restore();
+      }
+      final layerPaint = Paint()
+        ..color = Colors.white.withValues(alpha: layer.opacity);
+      for (final d in frame.layers[layer.id] ?? const <Drawable>[]) {
+        d.draw(c, layerPaint);
+      }
+    }
+    return recorder.endRecording().toImage(w, h);
   }
 
   void setCurrentLayer(int index) {

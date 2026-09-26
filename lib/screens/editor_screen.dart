@@ -14,6 +14,7 @@ import '../widgets/tools/image_edit_toolbar.dart';
 import '../widgets/panels/color_panel.dart';
 import '../widgets/panels/brush_panel.dart';
 import '../widgets/panels/layer_panel.dart';
+import '../widgets/panels/timeline_panel.dart';
 import '../widgets/canvas/paint_canvas.dart';
 import '../widgets/canvas/reference_floating_window.dart';
 import '../widgets/canvas/canvas_zoom_overlay.dart';
@@ -424,6 +425,7 @@ class _WideLayoutState extends State<_WideLayout> {
           const CanvasZoomOverlay(),
         ],
       ))),
+      const TimelinePanel(),
     ]);
   }
 }
@@ -462,6 +464,7 @@ class _NarrowLayout extends StatelessWidget {
           const CanvasZoomOverlay(),
         ],
       ))),
+      const TimelinePanel(),
     ]);
   }
 }

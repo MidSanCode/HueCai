@@ -47,8 +47,7 @@ Map<String, Uint8List> _entriesOf(List<int> bytes) {
   final out = <String, Uint8List>{};
   for (final f in archive.files) {
     if (!f.isFile) continue;
-    final c = f.content;
-    out[f.name] = c is Uint8List ? c : Uint8List.fromList(c);
+    out[f.name] = f.content;
   }
   return out;
 }
