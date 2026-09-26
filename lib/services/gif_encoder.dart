@@ -139,7 +139,9 @@ class GifEncoder {
       colors.addAll([r ~/ count, g ~/ count, b ~/ count]);
     }
     // GIF colour tables must be a power of two, at least 2 entries.
-    while (colors.length < 6) colors.addAll([0, 0, 0]);
+    while (colors.length < 6) {
+      colors.addAll([0, 0, 0]);
+    }
     var entries = 2;
     while (entries < colors.length ~/ 3) {
       entries <<= 1;

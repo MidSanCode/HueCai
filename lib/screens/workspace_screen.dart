@@ -240,11 +240,14 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         )),
       ],
     );
+    if (!mounted) return;
+    // State.context, guarded by State.mounted — the popup menu was awaited,
+    // so the caller's BuildContext may be defunct.
     final pp = context.read<ProjectProvider>();
     if (result == 'sync') {
-      await _syncProject(ctx, project);
+      await _syncProject(context, project);
     } else if (result == 'rename') {
-      _showRenameDialog(ctx, project);
+      _showRenameDialog(context, project);
     } else if (result == 'delete') {
       await pp.deleteProject(project.filePath!);
       if (context.mounted) pp.loadRecentProjects();

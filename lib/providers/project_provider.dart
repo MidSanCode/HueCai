@@ -1676,7 +1676,9 @@ class ProjectProvider extends ChangeNotifier {
     final c = Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
     for (final layer in _currentProject!.layers) {
       if (!layer.visible) continue;
-      for (final d in layer.drawables) d.draw(c, Paint());
+      for (final d in layer.drawables) {
+        d.draw(c, Paint());
+      }
       if (layer.image != null) {
         final img = layer.image!;
         c.save();

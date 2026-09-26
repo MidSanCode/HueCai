@@ -146,7 +146,7 @@ Future<void> _runExport(
     builder: (_) => AlertDialog(
       content: ValueListenableBuilder<int>(
         valueListenable: progress,
-        builder: (_, done, __) => Column(
+        builder: (_, done, _) => Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             LinearProgressIndicator(

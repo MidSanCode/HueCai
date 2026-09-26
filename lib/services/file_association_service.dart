@@ -115,8 +115,8 @@ class FileAssociationService {
       '<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">\n'
       '  <mime-type type="application/x-hcproj">\n'
       '    <comment>$fileDescription</comment>\n'
-      '    <glob pattern="*${extension}"/>\n'
-      '    <glob pattern="*${legacyExtension}"/>\n'
+      '    <glob pattern="*$extension"/>\n'
+      '    <glob pattern="*$legacyExtension"/>\n'
       '  </mime-type>\n'
       '</mime-info>\n',
     );

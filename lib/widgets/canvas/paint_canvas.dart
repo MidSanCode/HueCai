@@ -3189,10 +3189,7 @@ class _CanvasPainter extends CustomPainter {
       // own opacity/blend/mask. Unknown source ids degrade to empty.
       final content = layer.cloneOfId == null
           ? layer
-          : project.layers
-                  .where((l) => l.id == layer.cloneOfId)
-                  .firstOrNull ??
-              null;
+          : project.layers.where((l) => l.id == layer.cloneOfId).firstOrNull;
       if (content == null) return;
       final drawingHere = currentDrawable != null &&
           content.drawables.contains(currentDrawable);

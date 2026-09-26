@@ -630,15 +630,15 @@ class LgdfCodec {
     return {
       'path': path,
       'type': type,
-      if (mime != null) 'mime': mime,
-      if (format != null) 'format': format,
+      'mime': ?mime,
+      'format': ?format,
       'size': size,
       'sha256': sha256,
       'hash_algorithm': 'sha256',
       'created_time': createdTime ?? now,
       'last_update_time': now,
-      if (width != null) 'width': width,
-      if (height != null) 'height': height,
+      'width': ?width,
+      'height': ?height,
       if (type == 'text') 'encoding': 'utf-8',
     };
   }

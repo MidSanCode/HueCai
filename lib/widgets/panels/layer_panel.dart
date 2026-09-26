@@ -520,24 +520,28 @@ class _LayerItemState extends State<_LayerItem> {
         )),
       ],
     ).then((value) {
+      if (value == null) return;
+      if (!mounted) return;
+      // `context` (the State's own property; the method parameter shadows it)
+      // guarded by State.mounted — the menu was awaited.
       switch (value) {
         case 'delete': widget.onDelete();
         case 'merge': widget.onMergeDown();
         case 'duplicate': widget.onDuplicate();
         case 'clear': widget.onClear();
         case 'leave_group':
-          context.read<ProjectProvider>()
+          this.context.read<ProjectProvider>()
               .moveLayerToGroup(widget.index, null);
         case 'clone':
-          context.read<ProjectProvider>().addCloneLayer(widget.index);
+          this.context.read<ProjectProvider>().addCloneLayer(widget.index);
         case 'vector':
-          final pp = context.read<ProjectProvider>();
+          final pp = this.context.read<ProjectProvider>();
           pp.saveSnapshot();
           pp.setLayerVector(widget.index, !widget.layer.isVector);
         case 'add_adjustment':
-          _addAdjustmentLayer(context);
+          _addAdjustmentLayer(this.context);
         case 'edit_adjustment':
-          _editAdjustmentLayer(context);
+          _editAdjustmentLayer(this.context);
       }
     });
   }
@@ -689,11 +693,19 @@ void _showBgColorPicker(BuildContext context, ProjectProvider pp, Color currentB
 
 /// Header row for a layer group: expand arrow, visibility eye, name, and a
 /// context menu for group operations (rename / opacity / dissolve / delete).
-class _GroupHeader extends StatelessWidget {
+class _GroupHeader extends StatefulWidget {
   final LayerGroup group;
   final ProjectProvider provider;
 
   const _GroupHeader({required this.group, required this.provider});
+
+  @override
+  State<_GroupHeader> createState() => _GroupHeaderState();
+}
+
+class _GroupHeaderState extends State<_GroupHeader> {
+  LayerGroup get group => widget.group;
+  ProjectProvider get provider => widget.provider;
 
   @override
   Widget build(BuildContext context) {
@@ -772,11 +784,14 @@ class _GroupHeader extends StatelessWidget {
         ),
       ],
     ).then((value) {
+      if (value == null) return;
+      if (!mounted) return;
+      // State.context (guarded by State.mounted) — the menu was awaited.
       switch (value) {
         case 'rename':
-          _renameGroup(context);
+          _renameGroup(this.context);
         case 'opacity':
-          _showGroupOpacity(context);
+          _showGroupOpacity(this.context);
         case 'dissolve':
           provider.dissolveGroup(group.id);
         case 'delete_layers':

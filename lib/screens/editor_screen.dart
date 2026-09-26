@@ -176,11 +176,12 @@ class _EditorScreenState extends State<EditorScreen> {
       ],
     ).then((value) {
       if (value == null) return;
+      if (!mounted) return;
       switch (value) {
-        case 'file': _showFileMenu(context);
-        case 'image': _showImageMenu(context);
-        case 'tools': _showToolMenu(context);
-        case 'settings': Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+        case 'file': _showFileMenu(this.context);
+        case 'image': _showImageMenu(this.context);
+        case 'tools': _showToolMenu(this.context);
+        case 'settings': Navigator.of(this.context).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
       }
     });
   }
@@ -208,18 +209,23 @@ class _EditorScreenState extends State<EditorScreen> {
       ],
     ).then((value) async {
       if (value == null) return;
+      if (!mounted) return;
       switch (value) {
         case 'new':
           // Guard unsaved work, then return to the workspace so the user can
           // create the new project there. Previously this pushed a fresh
           // EditorScreen with pushAndRemoveUntil, which silently threw away
           // the current project without ever prompting.
-          if (!await mayLeaveWithUnsavedChanges(context)) return;
+          if (!await mayLeaveWithUnsavedChanges(this.context)) return;
           if (!context.mounted) return;
           context.read<ProjectProvider>().closeProject();
           Navigator.of(context).pop();
-        case 'save': context.read<ProjectProvider>().saveProject();
-        case 'export': _showExportDialog(context);
+        case 'save':
+          if (!context.mounted) return;
+          context.read<ProjectProvider>().saveProject();
+        case 'export':
+          if (!context.mounted) return;
+          _showExportDialog(context);
       }
     });
   }
@@ -237,7 +243,8 @@ class _EditorScreenState extends State<EditorScreen> {
       ],
     ).then((value) {
       if (value == null) return;
-      if (value == 'import') _importImageToCanvas(context);
+      if (!mounted) return;
+      if (value == 'import') _importImageToCanvas(this.context);
     });
   }
 
@@ -279,11 +286,14 @@ class _EditorScreenState extends State<EditorScreen> {
       ],
     ).then((value) {
       if (value == null) return;
-      final tp = context.read<ToolProvider>();
+      if (!mounted) return;
+      // Use the State's own context below: the menu was awaited, so the
+      // caller's BuildContext may already be defunct (lint: mounted guard).
+      final tp = this.context.read<ToolProvider>();
       switch (value) {
         case 'select':
           tp.setTool(ToolType.select);
-          context.read<ProjectProvider>().enterSelectionMode();
+          this.context.read<ProjectProvider>().enterSelectionMode();
         case 'move': tp.setTool(ToolType.move);
         case 'fill': tp.setTool(ToolType.fill);
         case 'eyedropper': tp.setTool(ToolType.eyedropper);
@@ -312,7 +322,10 @@ class _EditorScreenState extends State<EditorScreen> {
   void _importImageToCanvas(BuildContext context) async {
     final result = await FilePicker.platform.pickFiles(type: FileType.image);
     if (result != null && result.files.single.path != null) {
-      context.read<ProjectProvider>().importImageToCanvas(result.files.single.path!);
+      if (!context.mounted) return;
+      context
+          .read<ProjectProvider>()
+          .importImageToCanvas(result.files.single.path!);
     }
   }
 
