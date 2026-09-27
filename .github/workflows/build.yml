@@ -27,6 +27,10 @@ on:
         description: 'Web'
         type: boolean
         default: false
+      publish_release:
+        description: '发布为 Releases（上传构建产物到 GitHub Releases）'
+        type: boolean
+        default: false
 
 jobs:
   windows:
@@ -153,9 +157,10 @@ jobs:
         run: flutter pub get
       - name: Build
         run: flutter build macos --release --build-name=$BUILD_NAME --build-number=$BUILD_NUMBER --dart-define-from-file=config.json
-      - run: |
+      - name: Zip app bundle
+        run: |
           cd build/macos/Build/Products/Release
-          zip -r ../../../../../huecai-macos-${{ env.BUILD_NAME }}.zip .
+          zip -r -y ../../../../../huecai-macos-${{ env.BUILD_NAME }}.zip hue_cai.app
           cd -
       - uses: actions/upload-artifact@v4
         with:
@@ -320,3 +325,65 @@ jobs:
         with:
           name: huecai-Web
           path: huecai-web-${{ env.BUILD_NAME }}.zip
+
+  # 汇总任务：勾选“发布为 Releases”后，把本次成功构建的产物上传到
+  # GitHub Releases。Release 标题与 tag 均为「版本号+构建数字」
+  # （如 1.2.3+42）；若 Release 里已有同名文件则跳过该文件的上传，
+  # 其余文件照常补传（可重复运行）。
+  release:
+    if: inputs.publish_release && !cancelled() && !contains(needs.*.result, 'failure')
+    needs: [windows, linux, macos, android, ios, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version
+        run: |
+          VER=$(grep '^version:' pubspec.yaml | cut -d' ' -f2)
+          BUILD_NAME=$(echo "$VER" | cut -d'+' -f1)
+          BUILD_NUMBER=$(echo "$VER" | cut -d'+' -f2)
+          echo "TAG=${BUILD_NAME}+${BUILD_NUMBER}" >> $GITHUB_ENV
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release (if missing)
+        run: |
+          if ! ls dist/* >/dev/null 2>&1; then
+            echo "::warning::没有可上传的构建产物，跳过 Release"
+            echo "EMPTY=1" >> $GITHUB_ENV
+            exit 0
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG 已存在，只补传缺失的文件"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --notes "HueCai 自动构建：$TAG"
+            echo "已创建 Release $TAG"
+          fi
+      - name: Upload assets (skip same-name)
+        if: env.EMPTY != '1'
+        run: |
+          existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' 2>/dev/null || true)
+          uploaded=0
+          skipped=0
+          for f in dist/*; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            if printf '%s\n' "$existing" | grep -Fxq -- "$name"; then
+              echo "跳过（同名文件已存在）：$name"
+              skipped=$((skipped+1))
+            else
+              gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "$f"
+              echo "已上传：$name"
+              uploaded=$((uploaded+1))
+            fi
+          done
+          echo "共上传 $uploaded 个，跳过 $skipped 个"
