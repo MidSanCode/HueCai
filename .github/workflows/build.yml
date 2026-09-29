@@ -8,7 +8,11 @@ on:
         type: boolean
         default: true
       build_linux:
-        description: 'Linux (x64)'
+        description: 'Linux (x64, tar.gz)'
+        type: boolean
+        default: false
+      build_appimage:
+        description: 'Linux AppImage (x64)'
         type: boolean
         default: false
       build_macos:
@@ -94,7 +98,7 @@ jobs:
           path: installer_output/*.exe
 
   linux:
-    if: inputs.build_linux
+    if: inputs.build_linux || inputs.build_appimage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -124,11 +128,59 @@ jobs:
         run: flutter pub get
       - name: Build
         run: flutter build linux --release --build-name=$BUILD_NAME --build-number=$BUILD_NUMBER --dart-define-from-file=config.json
-      - run: tar -czf huecai-linux-${{ env.BUILD_NAME }}.tar.gz -C build/linux/x64/release/bundle .
+      - name: Package tar.gz
+        if: inputs.build_linux
+        run: tar -czf huecai-linux-${{ env.BUILD_NAME }}.tar.gz -C build/linux/x64/release/bundle .
       - uses: actions/upload-artifact@v4
+        if: inputs.build_linux
         with:
           name: huecai-Linux
           path: huecai-linux-${{ env.BUILD_NAME }}.tar.gz
+      - name: Build AppImage
+        if: inputs.build_appimage
+        run: |
+          # appimagetool 自身也是 AppImage；CI 环境常无 FUSE，
+          # 统一用 --appimage-extract-and-run 运行。
+          curl -sL -o appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool.AppImage
+
+          APPDIR=hue_cai.AppDir
+          mkdir -p "$APPDIR/usr/share/icons/hicolor/512x512/apps"
+
+          # Flutter Linux bundle：hue_cai + lib/ + data/（RPATH=$ORIGIN/lib），
+          # 整体放进 AppDir 根即可从任意位置启动。
+          cp -r build/linux/x64/release/bundle/. "$APPDIR/"
+          cp web/icons/Icon-512.png \
+            "$APPDIR/usr/share/icons/hicolor/512x512/apps/huecai.png"
+          ln -sf usr/share/icons/hicolor/512x512/apps/huecai.png "$APPDIR/.DirIcon"
+
+          cat > "$APPDIR/huecai.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=绘彩
+          Exec=AppRun
+          Icon=huecai
+          Terminal=false
+          Categories=Graphics;
+          X-AppImage-Version=${BUILD_NAME}
+          EOF
+
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/sh
+          HERE=$(dirname "$(readlink -f "$0")")
+          exec "$HERE/hue_cai" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+
+          ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run \
+            "$APPDIR" "huecai-linux-${BUILD_NAME}-x86_64.AppImage"
+      - uses: actions/upload-artifact@v4
+        if: inputs.build_appimage
+        with:
+          name: huecai-Linux-AppImage
+          path: huecai-linux-*-x86_64.AppImage
+          if-no-files-found: error
 
   macos:
     if: inputs.build_macos
